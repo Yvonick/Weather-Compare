@@ -1,0 +1,12 @@
+{
+  "name": "weather-compare",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs && node scripts/build-sites.mjs",
+    "start": "node scripts/build.mjs && node scripts/serve.mjs",
+    "test": "node --test",
+    "check": "npm run build && node --check dist/server/index.js && node --check app.bundle.js && node --check src/app.js && node --check src/api.js && node --check src/charts.js"
+  }
+}

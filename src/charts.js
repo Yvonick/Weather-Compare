@@ -1,0 +1,355 @@
+import { collectBucketKeys } from "./aggregate.js";
+import { METRIC_GROUPS, SERIES_STYLES } from "./config.js";
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const create = (tag, className, text) => {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+};
+const svgNode = (tag, attributes = {}) => {
+  const node = document.createElementNS(SVG_NS, tag);
+  Object.entries(attributes).forEach(([name, value]) => node.setAttribute(name, String(value)));
+  return node;
+};
+
+export function formatNumber(value, digits = 1) {
+  return Number.isFinite(value)
+    ? new Intl.NumberFormat("de-DE", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value)
+    : "n/a";
+}
+
+export function formatDirection(value) {
+  if (!Number.isFinite(value)) return "n/a";
+  const labels = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+  return `${Math.round(value)} deg ${labels[Math.round(value / 45) % 8]}`;
+}
+
+function niceStep(range, targetTicks = 5) {
+  if (!Number.isFinite(range) || range <= 0) return 1;
+  const rough = range / targetTicks;
+  const magnitude = 10 ** Math.floor(Math.log10(rough));
+  const normalized = rough / magnitude;
+  const step = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return step * magnitude;
+}
+
+function chartScale(metric, series) {
+  const values = [];
+  for (const location of series) {
+    for (const row of location.rows) {
+      if (Number.isFinite(row[metric.id])) values.push(row[metric.id]);
+      if (metric.type === "range") {
+        if (Number.isFinite(row[metric.minKey])) values.push(row[metric.minKey]);
+        if (Number.isFinite(row[metric.maxKey])) values.push(row[metric.maxKey]);
+      }
+    }
+  }
+  if (!values.length) return { min: 0, max: 1, ticks: [0, 0.2, 0.4, 0.6, 0.8, 1] };
+  let low = Math.min(...values);
+  let high = Math.max(...values);
+  if (metric.floorZero) low = 0;
+  if (low === high) high = low + (Math.abs(low) || 1);
+  const padding = (high - low) * 0.08;
+  const step = niceStep(high - low + padding * 2);
+  const min = metric.floorZero ? 0 : Math.floor((low - padding) / step) * step;
+  const max = Math.ceil((high + padding) / step) * step;
+  const ticks = [];
+  for (let value = min, guard = 0; value <= max + step / 10 && guard < 12; value += step, guard += 1) ticks.push(Number(value.toPrecision(12)));
+  return { min, max, ticks };
+}
+
+function tooltipText(location, row, metric) {
+  if (metric.type === "range") {
+    return `${location.label} · ${row.label} · Min ${formatNumber(row[metric.minKey], metric.digits)} ${metric.unit} · Avg ${formatNumber(row[metric.id], metric.digits)} ${metric.unit} · Max ${formatNumber(row[metric.maxKey], metric.digits)} ${metric.unit}`;
+  }
+  return `${location.label} · ${row.label} · ${formatNumber(row[metric.id], metric.digits)} ${metric.unit}`;
+}
+
+function attachTooltip(target, frame, text) {
+  target.setAttribute("tabindex", "0");
+  target.setAttribute("aria-label", text);
+  const show = (event) => {
+    const tooltip = frame.querySelector(".chart-tooltip");
+    tooltip.textContent = text;
+    tooltip.hidden = false;
+    const frameRect = frame.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const clientX = event.clientX || targetRect.left + targetRect.width / 2;
+    const clientY = event.clientY || targetRect.top;
+    tooltip.style.left = `${Math.max(8, Math.min(frameRect.width - 240, clientX - frameRect.left + 10))}px`;
+    tooltip.style.top = `${Math.max(8, clientY - frameRect.top - 58)}px`;
+  };
+  const hide = () => { frame.querySelector(".chart-tooltip").hidden = true; };
+  target.addEventListener("mouseenter", show);
+  target.addEventListener("focus", show);
+  target.addEventListener("mouseleave", hide);
+  target.addEventListener("blur", hide);
+}
+
+function renderThresholdBands(svg, metric, scale, yFor, plotLeft, plotTop, plotWidth, plotHeight) {
+  if (!metric.bands) return;
+  for (const band of metric.bands) {
+    const start = Math.max(scale.min, band.start);
+    const end = Math.min(scale.max, Number.isFinite(band.end) ? band.end : scale.max);
+    if (end <= start) continue;
+    const top = yFor(end);
+    const bottom = yFor(start);
+    svg.append(svgNode("rect", { x: plotLeft, y: top, width: plotWidth, height: bottom - top, fill: band.fill }));
+  }
+  svg.append(svgNode("rect", { x: plotLeft, y: plotTop, width: plotWidth, height: plotHeight, fill: "none", stroke: "#d7d7d7" }));
+}
+
+function renderThresholdLegend(metric) {
+  if (!metric.bands) return null;
+  const legend = create("div", "threshold-legend");
+  legend.setAttribute("aria-label", "Threshold legend");
+  for (const band of metric.bands) {
+    const item = create("span", "threshold-item");
+    const swatch = create("i", "threshold-swatch");
+    swatch.style.background = band.fill;
+    const range = Number.isFinite(band.end) ? `${band.start}–${band.end}` : `${band.start}+`;
+    item.append(swatch, document.createTextNode(`${band.label} ${range}`));
+    legend.append(item);
+  }
+  return legend;
+}
+
+export function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 } = {}) {
+  container.replaceChildren();
+  const frame = create("div", "chart-frame");
+  const scroll = create("div", "chart-scroll");
+  const tooltip = create("div", "chart-tooltip");
+  tooltip.hidden = true;
+  tooltip.setAttribute("role", "status");
+  frame.append(scroll, tooltip);
+  container.append(frame);
+
+  const keys = collectBucketKeys(series);
+  if (!keys.length) {
+    scroll.append(create("p", "empty-state", "No values are available for this chart."));
+    return frame;
+  }
+
+  const baseWidth = Math.max(680, 110 + keys.length * 82);
+  const width = Math.round(baseWidth * zoom);
+  const height = Math.round(300 * zoom);
+  const margin = { top: 20 * zoom, right: 26 * zoom, bottom: 74 * zoom, left: 62 * zoom };
+  const plotWidth = width - margin.left - margin.right;
+  const plotHeight = height - margin.top - margin.bottom;
+  const scale = chartScale(metric, series);
+  const yFor = (value) => margin.top + (scale.max - value) / (scale.max - scale.min) * plotHeight;
+  const xFor = (index) => margin.left + (keys.length === 1 ? plotWidth / 2 : index / (keys.length - 1) * plotWidth);
+  const svg = svgNode("svg", { class: "chart-svg", viewBox: `0 0 ${width} ${height}`, width, height, role: "img", "aria-label": `${metric.title} line chart` });
+
+  renderThresholdBands(svg, metric, scale, yFor, margin.left, margin.top, plotWidth, plotHeight);
+  for (const tick of scale.ticks) {
+    const y = yFor(tick);
+    svg.append(svgNode("line", { x1: margin.left, x2: width - margin.right, y1: y, y2: y, stroke: "#d7d7d7", "stroke-width": 1 }));
+    const label = svgNode("text", { x: margin.left - 10, y: y + 4, "text-anchor": "end", class: "axis-label" });
+    label.textContent = formatNumber(tick, Math.abs(tick) < 10 && tick % 1 ? 1 : 0);
+    svg.append(label);
+  }
+  keys.forEach((key, index) => {
+    const label = svgNode("text", { x: xFor(index), y: height - margin.bottom + 24, transform: `rotate(-35 ${xFor(index)} ${height - margin.bottom + 24})`, "text-anchor": "end", class: "axis-label" });
+    const row = series.flatMap((location) => location.rows).find((candidate) => candidate.key === key);
+    label.textContent = row?.label || key;
+    svg.append(label);
+  });
+
+  for (const location of series) {
+    const style = SERIES_STYLES[location.styleIndex % SERIES_STYLES.length];
+    const isHighlighted = highlightIndex === location.styleIndex;
+    const lineWidth = metric.type === "range"
+      ? (isHighlighted ? 4.1 : 2.6)
+      : (isHighlighted ? 5.2 : 3.4);
+    const opacity = metric.type === "range" ? (isHighlighted ? 0.9 : 0.7) : 1;
+    const rowByKey = new Map(location.rows.map((row) => [row.key, row]));
+    let path = "";
+    keys.forEach((key, index) => {
+      const value = rowByKey.get(key)?.[metric.id];
+      if (!Number.isFinite(value)) return;
+      path += `${path ? " L" : "M"} ${xFor(index)} ${yFor(value)}`;
+    });
+    if (path) svg.append(svgNode("path", { d: path, fill: "none", stroke: style.color, "stroke-width": lineWidth, "stroke-dasharray": style.dash, "stroke-linejoin": "round", "stroke-linecap": "round", opacity }));
+
+    keys.forEach((key, index) => {
+      const row = rowByKey.get(key);
+      const value = row?.[metric.id];
+      if (!row || !Number.isFinite(value)) return;
+      const x = xFor(index);
+      const y = yFor(value);
+      if (metric.type === "range" && Number.isFinite(row[metric.minKey]) && Number.isFinite(row[metric.maxKey])) {
+        const minY = yFor(row[metric.minKey]);
+        const maxY = yFor(row[metric.maxKey]);
+        svg.append(svgNode("line", { x1: x, x2: x, y1: minY, y2: maxY, stroke: style.color, "stroke-width": isHighlighted ? 3.2 : 2.3, opacity }));
+        svg.append(svgNode("line", { x1: x - 6, x2: x + 6, y1: minY, y2: minY, stroke: style.color, "stroke-width": isHighlighted ? 3.3 : 2.4, opacity }));
+        svg.append(svgNode("line", { x1: x - 6, x2: x + 6, y1: maxY, y2: maxY, stroke: style.color, "stroke-width": isHighlighted ? 3.3 : 2.4, opacity }));
+      }
+      const markerRadius = metric.type === "range" ? (isHighlighted ? 4.9 : 4.1) : (isHighlighted ? 5.1 : 4.2);
+      const marker = svgNode("circle", { cx: x, cy: y, r: markerRadius, fill: style.color, stroke: "#fff", "stroke-width": isHighlighted ? 1.7 : 1.4, opacity });
+      attachTooltip(marker, frame, tooltipText(location, row, metric));
+      svg.append(marker);
+    });
+  }
+
+  scroll.append(svg);
+  return frame;
+}
+
+function renderChartCard(metric, series, highlightIndex, onPopout) {
+  const card = create("section", "chart-card");
+  const head = create("div", "chart-head");
+  const titleWrap = create("div");
+  titleWrap.append(create("h3", null, metric.title), create("span", "chart-unit", metric.unit));
+  const button = create("button", "text-button", "Pop out");
+  button.type = "button";
+  button.addEventListener("click", () => onPopout(metric, button));
+  head.append(titleWrap, button);
+  const body = create("div");
+  const legend = renderThresholdLegend(metric);
+  card.append(head);
+  if (legend) card.append(legend);
+  card.append(body);
+  renderChartFrame(body, metric, series, highlightIndex);
+  return card;
+}
+
+function renderTable(group, series, granularity) {
+  const wrapper = create("div", "table-scroll");
+  const table = create("table");
+  const caption = create("caption", null, group.tableTitle);
+  const head = create("thead");
+  const locationRow = create("tr");
+  const bucketHead = create("th", null, granularity === "day" ? "Date" : "Time bucket");
+  bucketHead.rowSpan = 2;
+  locationRow.append(bucketHead);
+  series.forEach((location) => {
+    const cell = create("th", null, location.label);
+    cell.colSpan = group.tableColumns.length;
+    cell.scope = "colgroup";
+    locationRow.append(cell);
+  });
+  const metricRow = create("tr");
+  series.forEach(() => group.tableColumns.forEach((column) => {
+    const cell = create("th", null, column.label);
+    cell.scope = "col";
+    metricRow.append(cell);
+  }));
+  head.append(locationRow, metricRow);
+
+  const body = create("tbody");
+  const keys = collectBucketKeys(series);
+  const rowsByLocation = series.map((location) => new Map(location.rows.map((row) => [row.key, row])));
+  for (const key of keys) {
+    const rowNode = create("tr");
+    const representative = rowsByLocation.map((map) => map.get(key)).find(Boolean);
+    const bucket = create("th", null, representative?.label || key);
+    bucket.scope = "row";
+    rowNode.append(bucket);
+    rowsByLocation.forEach((map) => group.tableColumns.forEach((column) => {
+      const value = map.get(key)?.[column.key];
+      rowNode.append(create("td", null, column.formatter === "direction" ? formatDirection(value) : formatNumber(value, column.digits)));
+    }));
+    body.append(rowNode);
+  }
+  table.append(caption, head, body);
+  wrapper.append(table);
+  return wrapper;
+}
+
+function renderGroup(group, series, settings, onPopout) {
+  const article = create("article", "panel metric-panel");
+  const intro = create("div", "panel-intro");
+  const titleWrap = create("div");
+  titleWrap.append(create("p", "eyebrow", group.eyebrow), create("h2", null, group.title));
+  intro.append(titleWrap, create("p", "description", group.description));
+  article.append(intro);
+  if (group.id === "air" && settings.view === "graph") {
+    const note = create("p", "method-note");
+    note.innerHTML = 'Threshold guides follow the <a href="https://airindex.eea.europa.eu/AQI/index.html" target="_blank" rel="noreferrer">EEA European AQI methodology</a>.';
+    article.append(note);
+  }
+  if (!series.length) {
+    article.append(create("p", "empty-state", "Load at least one visible location to populate this panel."));
+  } else if (settings.view === "table") {
+    article.append(renderTable(group, series, settings.granularity));
+  } else {
+    const grid = create("div", `chart-grid ${group.metrics.length === 1 ? "single" : ""}`);
+    group.metrics.forEach((metric) => grid.append(renderChartCard(metric, series, settings.highlightLocation, onPopout)));
+    article.append(grid);
+  }
+  return article;
+}
+
+export function renderDashboard(container, series, settings, onPopout) {
+  const sourcePanel = container.querySelector("#sources-panel");
+  container.querySelectorAll(".metric-panel").forEach((panel) => panel.remove());
+  METRIC_GROUPS.forEach((group) => container.insertBefore(renderGroup(group, series, settings, onPopout), sourcePanel));
+}
+
+export function createChartPopout(dialog) {
+  const title = dialog.querySelector("[data-popout-title]");
+  const unit = dialog.querySelector("[data-popout-unit]");
+  const body = dialog.querySelector("[data-popout-body]");
+  const zoomOut = dialog.querySelector("[data-zoom-out]");
+  const zoomIn = dialog.querySelector("[data-zoom-in]");
+  const reset = dialog.querySelector("[data-zoom-reset]");
+  const close = dialog.querySelector("[data-popout-close]");
+  let state = null;
+  let trigger = null;
+  let drag = null;
+
+  const rerender = () => {
+    if (!state) return;
+    renderChartFrame(body, state.metric, state.series, state.highlightIndex, { zoom: state.zoom });
+    reset.disabled = state.zoom === 1;
+    zoomOut.disabled = state.zoom <= 0.7;
+    zoomIn.disabled = state.zoom >= 2.5;
+  };
+  const setZoom = (value) => {
+    state.zoom = Math.max(0.7, Math.min(2.5, Math.round(value * 10) / 10));
+    rerender();
+  };
+
+  zoomOut.addEventListener("click", () => setZoom(state.zoom - 0.3));
+  zoomIn.addEventListener("click", () => setZoom(state.zoom + 0.3));
+  reset.addEventListener("click", () => setZoom(1));
+  close.addEventListener("click", () => dialog.close());
+  dialog.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    dialog.close();
+  });
+  dialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    dialog.close();
+  });
+  dialog.addEventListener("close", () => trigger?.focus());
+  body.addEventListener("pointerdown", (event) => {
+    const scroll = body.querySelector(".chart-scroll");
+    drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: scroll.scrollLeft, top: scroll.scrollTop, scroll };
+    body.setPointerCapture?.(event.pointerId);
+  });
+  body.addEventListener("pointermove", (event) => {
+    if (!drag || drag.id !== event.pointerId) return;
+    drag.scroll.scrollLeft = drag.left - (event.clientX - drag.x);
+    drag.scroll.scrollTop = drag.top - (event.clientY - drag.y);
+  });
+  const endDrag = () => { drag = null; };
+  body.addEventListener("pointerup", endDrag);
+  body.addEventListener("pointercancel", endDrag);
+
+  return {
+    open(metric, series, highlightIndex, sourceButton) {
+      state = { metric, series, highlightIndex, zoom: 1 };
+      trigger = sourceButton;
+      title.textContent = metric.title;
+      unit.textContent = `Magnified visualization · ${metric.unit}`;
+      rerender();
+      dialog.showModal();
+      zoomIn.focus();
+    }
+  };
+}

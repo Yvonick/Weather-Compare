@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Compare historical weather and air quality across places.">
+  <title>Weather Compare</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="page-shell">
+    <header class="hero">
+      <p class="eyebrow">Weather Compare / Historical Weather Panels</p>
+      <h1>Compare past weather across places.</h1>
+      <p class="hero-copy">Fetch historical weather and air-quality data for up to 20 locations at once, aggregate it by day or sub-day windows, and switch between graph and table views. Settings stay in this browser between sessions.</p>
+    </header>
+
+    <div class="app-layout">
+      <aside class="controls-column" aria-label="Dataset controls">
+        <form id="controls-form" class="panel controls-panel" novalidate>
+          <div>
+            <p class="eyebrow">Parameters</p>
+            <h2>Dataset controls</h2>
+            <p class="note">Open-Meteo historical weather, geocoding, and air-quality APIs</p>
+          </div>
+
+          <div class="field-block">
+            <div class="field-heading"><span>Locations</span><span id="location-count">2 / 20</span></div>
+            <p id="boot-status" class="boot-status" role="status">Starting location controls. If this message remains visible, JavaScript did not start.</p>
+            <div id="location-list" class="location-list"></div>
+            <button id="add-location-button" class="secondary-button full" type="button">Add location</button>
+          </div>
+
+          <label class="field">
+            <span>Time window</span>
+            <select id="time-window-select" name="preset">
+              <option value="7d">Past 7 days</option>
+              <option value="15d">Past 15 days</option>
+              <option value="21d">Past 21 days</option>
+              <option value="custom">Custom start / end</option>
+            </select>
+          </label>
+
+          <div class="field-grid">
+            <label class="field"><span>Start date</span><input id="start-date-input" name="startDate" type="date"></label>
+            <label class="field"><span>End date</span><input id="end-date-input" name="endDate" type="date"></label>
+          </div>
+
+          <div class="field-grid">
+            <label class="field">
+              <span>Time granularity</span>
+              <select id="granularity-select" name="granularity">
+                <option value="day">Day</option>
+                <option value="12h">12 hours</option>
+                <option value="6h">6 hours</option>
+                <option value="3h">3 hours</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>View mode</span>
+              <select id="view-select" name="view">
+                <option value="graph">Graph</option>
+                <option value="table">Table</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="action-grid">
+            <button id="load-button" class="primary-button" type="submit">Load comparison</button>
+            <button id="reset-button" class="secondary-button" type="button">Reset defaults</button>
+            <button id="export-button" class="secondary-button" type="button">Export spreadsheet</button>
+            <button id="share-button" class="secondary-button" type="button">Copy share link</button>
+          </div>
+
+          <div id="error-list" class="error-list" role="alert"></div>
+          <p id="status" class="status" aria-live="polite">Preparing the initial comparison.</p>
+        </form>
+
+        <section class="panel legend-panel" aria-labelledby="legend-title">
+          <p class="eyebrow">Resolved locations</p>
+          <h2 id="legend-title">Series legend</h2>
+          <p class="note">Colors and dash patterns stay consistent across every chart. Source labels identify the weather and air-quality grid points.</p>
+          <div id="series-legend" class="series-legend"><p class="empty-state">Load at least one location to show the legend.</p></div>
+        </section>
+      </aside>
+
+      <section id="dashboard" class="dashboard" aria-label="Weather comparison">
+        <article id="sources-panel" class="panel sources-panel">
+          <p class="eyebrow">Sources</p>
+          <h2>Data reference</h2>
+          <p class="description">Official documentation for the APIs and thresholds used on this page.</p>
+          <ul class="source-list">
+            <li><a href="https://open-meteo.com/en/docs/historical-weather-api" target="_blank" rel="noreferrer">Open-Meteo Historical Weather API</a> — archived weather variables</li>
+            <li><a href="https://open-meteo.com/en/docs/air-quality-api" target="_blank" rel="noreferrer">Open-Meteo Air Quality API</a> — air-quality indicators and UV index</li>
+            <li><a href="https://open-meteo.com/en/docs/geocoding-api" target="_blank" rel="noreferrer">Open-Meteo Geocoding API</a> — place lookup and source labels</li>
+            <li><a href="https://airindex.eea.europa.eu/AQI/index.html" target="_blank" rel="noreferrer">EEA European AQI methodology</a> — air-quality guide bands</li>
+            <li><a href="https://www.geonames.org/" target="_blank" rel="noreferrer">GeoNames</a> — underlying place dataset attribution</li>
+          </ul>
+        </article>
+      </section>
+    </div>
+  </main>
+
+  <dialog id="chart-popout" class="chart-popout">
+    <div class="popout-shell">
+      <header class="popout-head">
+        <div><p data-popout-unit class="eyebrow"></p><h2 data-popout-title></h2></div>
+        <div class="popout-actions">
+          <button data-zoom-out class="secondary-button" type="button" aria-label="Zoom out graph">Zoom out</button>
+          <button data-zoom-in class="secondary-button" type="button" aria-label="Zoom in graph">Zoom in</button>
+          <button data-zoom-reset class="secondary-button" type="button">Reset</button>
+          <button data-popout-close class="primary-button" type="button">Close</button>
+        </div>
+      </header>
+      <div data-popout-body class="popout-body"></div>
+    </div>
+  </dialog>
+
+  <noscript><p class="startup-error">Weather Compare needs JavaScript enabled to create the location search controls.</p></noscript>
+  <script defer src="./app.bundle.js"></script>
+</body>
+</html>
