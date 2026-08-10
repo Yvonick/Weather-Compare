@@ -35,7 +35,7 @@ function niceStep(range, targetTicks = 5) {
   return step * magnitude;
 }
 
-function chartScale(metric, series) {
+export function chartScale(metric, series) {
   const values = [];
   for (const location of series) {
     for (const row of location.rows) {
@@ -49,12 +49,18 @@ function chartScale(metric, series) {
   if (!values.length) return { min: 0, max: 1, ticks: [0, 0.2, 0.4, 0.6, 0.8, 1] };
   let low = Math.min(...values);
   let high = Math.max(...values);
-  if (metric.floorZero) low = 0;
-  if (low === high) high = low + (Math.abs(low) || 1);
-  const padding = (high - low) * 0.08;
-  const step = niceStep(high - low + padding * 2);
-  const min = metric.floorZero ? 0 : Math.floor((low - padding) / step) * step;
-  const max = Math.ceil((high + padding) / step) * step;
+  if (low === high) {
+    const spread = Math.max(Math.abs(low) * 0.1, 10 ** -(metric.digits ?? 1));
+    low -= spread;
+    high += spread;
+  }
+  const valueRange = high - low;
+  const padding = valueRange * 0.08;
+  const rawMin = metric.floorZero ? Math.max(0, low - padding) : low - padding;
+  const rawMax = high + padding;
+  const step = niceStep(rawMax - rawMin);
+  const min = Math.floor(rawMin / step) * step;
+  const max = Math.ceil(rawMax / step) * step;
   const ticks = [];
   for (let value = min, guard = 0; value <= max + step / 10 && guard < 12; value += step, guard += 1) ticks.push(Number(value.toPrecision(12)));
   return { min, max, ticks };
@@ -230,7 +236,7 @@ export function renderChartFrame(container, metric, series, highlightIndex, { zo
     const historicalPath = buildPath("historical");
     const forecastPath = buildPath("forecast");
     if (historicalPath) svg.append(svgNode("path", { d: historicalPath, fill: "none", stroke: style.color, "stroke-width": lineWidth, "stroke-dasharray": style.dash, "stroke-linejoin": "round", "stroke-linecap": "round", opacity }));
-    if (forecastPath) svg.append(svgNode("path", { d: forecastPath, fill: "none", stroke: style.color, "stroke-width": lineWidth, "stroke-dasharray": "8 5", "stroke-linejoin": "round", "stroke-linecap": "round", opacity: opacity * 0.82 }));
+    if (forecastPath) svg.append(svgNode("path", { d: forecastPath, fill: "none", stroke: style.color, "stroke-width": lineWidth, "stroke-dasharray": style.dash, "stroke-linejoin": "round", "stroke-linecap": "round", opacity: opacity * 0.82 }));
 
     keys.forEach((key, index) => {
       const row = rowByKey.get(key);
@@ -242,7 +248,7 @@ export function renderChartFrame(container, metric, series, highlightIndex, { zo
       if (metric.type === "range" && Number.isFinite(row[metric.minKey]) && Number.isFinite(row[metric.maxKey])) {
         const minY = yFor(row[metric.minKey]);
         const maxY = yFor(row[metric.maxKey]);
-        const rangeAttributes = { stroke: style.color, "stroke-dasharray": isForecast ? "4 3" : "", opacity: isForecast ? opacity * 0.82 : opacity };
+        const rangeAttributes = { stroke: style.color, opacity: isForecast ? opacity * 0.82 : opacity };
         svg.append(svgNode("line", { x1: x, x2: x, y1: minY, y2: maxY, "stroke-width": isHighlighted ? 3.2 : 2.3, ...rangeAttributes }));
         svg.append(svgNode("line", { x1: x - 6, x2: x + 6, y1: minY, y2: minY, "stroke-width": isHighlighted ? 3.3 : 2.4, ...rangeAttributes }));
         svg.append(svgNode("line", { x1: x - 6, x2: x + 6, y1: maxY, y2: maxY, "stroke-width": isHighlighted ? 3.3 : 2.4, ...rangeAttributes }));
