@@ -42,7 +42,7 @@ The graph view contains 13 charts. Temperature uses min-to-max whiskers with ave
 - The default range joins the previous seven complete days to today plus the next six forecast days.
 - A labeled vertical line marks the historical/forecast boundary and the future region has a light tint.
 - Each location keeps the same color and marker shape across the complete timeline; dashed lines are reserved for forecasts, whose markers are hollow and whose lines have reduced opacity.
-- Forecast table rows are tinted and carry a forecast badge.
+- Forecast table columns are tinted and carry forecast confidence badges.
 - Forecast tooltips and table badges show a lead-time confidence guide: higher at 0–2 days, medium at 3–5 days, and lower from day 6.
 - The interface explicitly says this guide is based on lead time and is not an ensemble-derived probability.
 - Forecast provenance, confidence, and lead days are included in CSV exports.
@@ -52,9 +52,9 @@ The graph view contains 13 charts. Temperature uses min-to-max whiskers with ave
 
 - Five tables mirror the metric groups.
 - Two-tier headers group columns by resolved location.
-- Rows are the union of time buckets across loaded locations.
+- Columns are the union of time buckets across loaded locations; rows group each location's indicators.
 - Missing values render as an em dash.
-- Dates are shown day-first; sub-day rows include the bucket start time.
+- Dates are shown day-first across columns; sub-day column headings include the bucket start time.
 - Wind direction combines degrees with an eight-point compass label.
 
 ## Chart pop-out

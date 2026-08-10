@@ -1132,52 +1132,77 @@ function renderChartCard(metric, series, highlightIndex, onPopout) {
   return card;
 }
 
-function renderTable(group, series, granularity) {
+function buildTableModel(group, series) {
+  const metrics = group.tableColumns.filter((column) => !column.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[column.key]))));
+  const keys = collectBucketKeys(series);
+  const rowsByLocation = series.map((location) => new Map(location.rows.map((row) => [row.key, row])));
+  const buckets = keys.map((key) => {
+    const representative = rowsByLocation.map((map) => map.get(key)).find(Boolean);
+    return {
+      key,
+      label: representative?.label || key,
+      dataKind: representative?.dataKind || "historical",
+      forecastConfidence: representative?.forecastConfidence || null
+    };
+  });
+  const rows = series.flatMap((location, locationIndex) => metrics.map((metric, metricIndex) => ({
+    location,
+    locationIndex,
+    metric,
+    metricIndex,
+    values: keys.map((key) => rowsByLocation[locationIndex].get(key)?.[metric.key])
+  })));
+  return { buckets, metrics, rows };
+}
+
+function renderTable(group, series) {
   const wrapper = create("div", "table-scroll");
   const table = create("table");
   const caption = create("caption", null, group.tableTitle);
+  const model = buildTableModel(group, series);
   const head = create("thead");
-  const locationRow = create("tr");
-  const bucketHead = create("th", null, granularity === "day" ? "Date" : "Time bucket");
-  bucketHead.rowSpan = 2;
-  locationRow.append(bucketHead);
-  const columns = group.tableColumns.filter((column) => !column.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[column.key]))));
-  series.forEach((location) => {
-    const cell = create("th", null, location.label);
-    cell.colSpan = columns.length;
-    cell.scope = "colgroup";
-    locationRow.append(cell);
-  });
-  const metricRow = create("tr");
-  series.forEach(() => columns.forEach((column) => {
-    const cell = create("th", null, column.label);
+  const headingRow = create("tr");
+  const locationHead = create("th", "table-location-heading", "Location");
+  locationHead.scope = "col";
+  const metricHead = create("th", "table-metric-heading", "Indicator");
+  metricHead.scope = "col";
+  headingRow.append(locationHead, metricHead);
+  const firstForecastIndex = model.buckets.findIndex((bucket) => bucket.dataKind === "forecast");
+  model.buckets.forEach((bucket, bucketIndex) => {
+    const isForecast = bucket.dataKind === "forecast";
+    const classes = ["table-date-heading"];
+    if (isForecast) classes.push("forecast-table-column");
+    if (bucketIndex === firstForecastIndex) classes.push("is-first-forecast-column");
+    const cell = create("th", classes.join(" "), bucket.label);
     cell.scope = "col";
-    metricRow.append(cell);
-  }));
-  head.append(locationRow, metricRow);
+    if (isForecast) {
+      cell.append(create("small", "forecast-column-badge", `Forecast · ${bucket.forecastConfidence || "unknown"} confidence`));
+    }
+    headingRow.append(cell);
+  });
+  head.append(headingRow);
 
   const body = create("tbody");
-  const keys = collectBucketKeys(series);
-  const rowsByLocation = series.map((location) => new Map(location.rows.map((row) => [row.key, row])));
-  let forecastStarted = false;
-  for (const key of keys) {
+  model.rows.forEach((tableRow) => {
     const rowNode = create("tr");
-    const representative = rowsByLocation.map((map) => map.get(key)).find(Boolean);
-    const bucket = create("th", null, representative?.label || key);
-    bucket.scope = "row";
-    if (representative?.dataKind === "forecast") {
-      rowNode.className = `forecast-table-row ${forecastStarted ? "" : "is-first-forecast"}`.trim();
-      forecastStarted = true;
-      const badge = create("small", "forecast-row-badge", `Forecast · ${representative.forecastConfidence || "unknown"} confidence`);
-      bucket.append(badge);
+    if (tableRow.metricIndex === 0) {
+      const locationCell = create("th", "table-location-heading", tableRow.location.label);
+      locationCell.scope = "rowgroup";
+      locationCell.rowSpan = model.metrics.length;
+      rowNode.append(locationCell);
     }
-    rowNode.append(bucket);
-    rowsByLocation.forEach((map) => columns.forEach((column) => {
-      const value = map.get(key)?.[column.key];
-      rowNode.append(create("td", null, column.formatter === "direction" ? formatDirection(value) : formatNumber(value, column.digits)));
-    }));
+    const metricCell = create("th", "table-metric-heading", tableRow.metric.label);
+    metricCell.scope = "row";
+    rowNode.append(metricCell);
+    tableRow.values.forEach((value, bucketIndex) => {
+      const bucket = model.buckets[bucketIndex];
+      const classes = [];
+      if (bucket.dataKind === "forecast") classes.push("forecast-table-column");
+      if (bucketIndex === firstForecastIndex) classes.push("is-first-forecast-column");
+      rowNode.append(create("td", classes.join(" "), tableRow.metric.formatter === "direction" ? formatDirection(value) : formatNumber(value, tableRow.metric.digits)));
+    });
     body.append(rowNode);
-  }
+  });
   table.append(caption, head, body);
   wrapper.append(table);
   return wrapper;
@@ -1198,7 +1223,7 @@ function renderGroup(group, series, settings, onPopout) {
   if (!series.length) {
     article.append(create("p", "empty-state", "Load at least one visible location to populate this panel."));
   } else if (settings.view === "table") {
-    article.append(renderTable(group, series, settings.granularity));
+    article.append(renderTable(group, series));
   } else {
     const metrics = group.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
     const grid = create("div", `chart-grid ${metrics.length === 1 ? "single" : ""}`);

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { chartScale, lineDashForKind } from "../src/charts.js";
+import { buildTableModel, chartScale, lineDashForKind } from "../src/charts.js";
 
 const seriesWith = (key, values) => [{
   rows: values.map((value) => ({ [key]: value }))
@@ -44,4 +44,24 @@ test("zero remains available when it is part of the displayed dataset", () => {
 test("dash encoding is reserved exclusively for forecast data", () => {
   assert.equal(lineDashForKind("historical"), "");
   assert.equal(lineDashForKind("forecast"), "8 5");
+});
+
+test("table models put time buckets on columns and location indicators on rows", () => {
+  const model = buildTableModel({
+    tableColumns: [
+      { key: "temperatureMin", label: "Tmin", digits: 1 },
+      { key: "temperatureMax", label: "Tmax", digits: 1 }
+    ]
+  }, [{
+    label: "Fulda",
+    rows: [
+      { key: "2026-08-09", label: "09/08/2026", dataKind: "historical", temperatureMin: 11, temperatureMax: 20 },
+      { key: "2026-08-10", label: "10/08/2026", dataKind: "forecast", forecastConfidence: "higher", temperatureMin: 12, temperatureMax: 22 }
+    ]
+  }]);
+
+  assert.deepEqual(model.buckets.map((bucket) => bucket.label), ["09/08/2026", "10/08/2026"]);
+  assert.deepEqual(model.rows.map((row) => row.metric.label), ["Tmin", "Tmax"]);
+  assert.deepEqual(model.rows[0].values, [11, 12]);
+  assert.equal(model.buckets[1].dataKind, "forecast");
 });

@@ -34,7 +34,7 @@ The domain modules do not read DOM state. `app.js` is the only controller and ow
 
 ## Forecast presentation
 
-The historical and forecast segments share the same date axis. A labeled solid vertical boundary and tinted future region make the transition explicit. Forecast series use dashed lines, hollow markers, and reduced opacity. Forecast table rows use the same tint.
+The historical and forecast segments share the same date axis. A labeled solid vertical boundary and tinted future region make the transition explicit. Forecast series use dashed lines, hollow markers, and reduced opacity. Forecast table columns use the same tint.
 
 Line color and marker shape belong exclusively to location identity. A dashed plotted line belongs exclusively to forecast status. Chart domains use exact symmetric padding around the displayed values with readable ticks inside that domain; zero is included only when it is part of the data range.
 
