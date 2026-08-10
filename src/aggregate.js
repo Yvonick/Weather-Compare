@@ -22,7 +22,10 @@ function emptyBucket(key, granularity) {
     key,
     label: formatBucketLabel(key, granularity),
     temperatureMin: Infinity, temperatureMax: -Infinity, temperatureSum: 0, temperatureCount: 0,
-    precipitationSum: 0, snowfallSum: 0, sunshineSeconds: 0,
+    precipitationSum: 0, precipitationCount: 0,
+    snowfallSum: 0, snowfallCount: 0,
+    sunshineSeconds: 0, sunshineCount: 0,
+    precipitationProbabilityMax: -Infinity,
     uvSum: 0, uvCount: 0, uvMax: -Infinity,
     windSpeedSum: 0, windSpeedCount: 0, windGustMax: -Infinity,
     windDirectionSin: 0, windDirectionCos: 0, windDirectionCount: 0,
@@ -56,9 +59,22 @@ function ingestWeather(hourly = {}, ensureBucket) {
       bucket.temperatureSum += temperature;
       bucket.temperatureCount += 1;
     }
-    if (precipitation !== null) bucket.precipitationSum += precipitation;
-    if (snowfall !== null) bucket.snowfallSum += snowfall;
-    if (sunshine !== null) bucket.sunshineSeconds += sunshine;
+    if (precipitation !== null) {
+      bucket.precipitationSum += precipitation;
+      bucket.precipitationCount += 1;
+    }
+    if (snowfall !== null) {
+      bucket.snowfallSum += snowfall;
+      bucket.snowfallCount += 1;
+    }
+    if (sunshine !== null) {
+      bucket.sunshineSeconds += sunshine;
+      bucket.sunshineCount += 1;
+    }
+    const precipitationProbability = finiteAt(hourly.precipitation_probability, index);
+    if (precipitationProbability !== null) {
+      bucket.precipitationProbabilityMax = Math.max(bucket.precipitationProbabilityMax, precipitationProbability);
+    }
     addAverage(bucket, "windSpeed", speed);
     if (gust !== null) bucket.windGustMax = Math.max(bucket.windGustMax, gust);
     if (direction !== null) {
@@ -101,9 +117,10 @@ function finalize(bucket) {
     temperatureMin: bucket.temperatureCount ? bucket.temperatureMin : null,
     temperatureAvg: average(bucket, "temperature"),
     temperatureMax: bucket.temperatureCount ? bucket.temperatureMax : null,
-    precipitationSum: bucket.precipitationSum,
-    snowfallSum: bucket.snowfallSum,
-    sunshineHours: bucket.sunshineSeconds / 3600,
+    precipitationSum: bucket.precipitationCount ? bucket.precipitationSum : null,
+    snowfallSum: bucket.snowfallCount ? bucket.snowfallSum : null,
+    sunshineHours: bucket.sunshineCount ? bucket.sunshineSeconds / 3600 : null,
+    precipitationProbabilityMax: Number.isFinite(bucket.precipitationProbabilityMax) ? bucket.precipitationProbabilityMax : null,
     uvAvg: average(bucket, "uv"),
     uvMax: bucket.uvCount ? bucket.uvMax : null,
     windSpeedAvg: average(bucket, "windSpeed"),
@@ -119,7 +136,18 @@ function finalize(bucket) {
   };
 }
 
-export function aggregateLocationData(resolved, weather, air, granularity, sourceLabels = {}) {
+export function forecastConfidenceForLead(leadDays) {
+  if (!Number.isFinite(leadDays) || leadDays < 0) return null;
+  if (leadDays <= 2) return "higher";
+  if (leadDays <= 5) return "medium";
+  return "lower";
+}
+
+const daysBetween = (leftDate, rightDate) => Math.round(
+  (Date.parse(`${leftDate}T00:00:00Z`) - Date.parse(`${rightDate}T00:00:00Z`)) / 86400000
+);
+
+export function aggregateLocationData(resolved, weather, air, granularity, sourceLabels = {}, period = {}) {
   const buckets = new Map();
   const ensureBucket = (time) => {
     const key = getBucketKey(time, granularity);
@@ -133,7 +161,18 @@ export function aggregateLocationData(resolved, weather, air, granularity, sourc
     timezone: weather.timezone || air.timezone || resolved.timezone || "auto",
     weatherSource: sourceLabels.weather || null,
     airSource: sourceLabels.air || null,
-    rows: [...buckets.values()].sort((left, right) => left.key.localeCompare(right.key)).map(finalize)
+    rows: [...buckets.values()].sort((left, right) => left.key.localeCompare(right.key)).map(finalize).map((row) => {
+      const dataKind = period.kind === "forecast" ? "forecast" : "historical";
+      const forecastLeadDays = dataKind === "forecast" && period.forecastStartDate
+        ? Math.max(0, daysBetween(row.key.slice(0, 10), period.forecastStartDate))
+        : null;
+      return {
+        ...row,
+        dataKind,
+        forecastLeadDays,
+        forecastConfidence: forecastConfidenceForLead(forecastLeadDays)
+      };
+    })
   };
 }
 

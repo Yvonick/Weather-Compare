@@ -1,5 +1,6 @@
 export const EXPORT_HEADERS = [
   "location_query", "location_label", "latitude", "longitude", "timezone", "bucket_key", "bucket_label",
+  "data_kind", "forecast_confidence", "forecast_lead_days",
   "temperature_min_c", "temperature_avg_c", "temperature_max_c", "precipitation_sum_mm", "snowfall_sum_cm",
   "sunshine_hours", "uv_avg", "uv_max", "wind_speed_avg_kmh", "wind_gust_max_kmh", "wind_direction_deg",
   "aqi_avg", "aqi_max", "pm25_avg_ugm3", "pm10_avg_ugm3", "no2_avg_ugm3", "ozone_avg_ugm3", "so2_avg_ugm3"
@@ -14,6 +15,9 @@ export function buildExportRows(series) {
     timezone: location.timezone,
     bucket_key: row.key,
     bucket_label: row.label,
+    data_kind: row.dataKind || "historical",
+    forecast_confidence: row.forecastConfidence || null,
+    forecast_lead_days: row.forecastLeadDays ?? null,
     temperature_min_c: row.temperatureMin,
     temperature_avg_c: row.temperatureAvg,
     temperature_max_c: row.temperatureMax,

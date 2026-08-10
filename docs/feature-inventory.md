@@ -5,7 +5,7 @@ This inventory was produced by systematically exercising the live prototype at `
 ## Core workflow
 
 1. Start with Fulda, Germany and Zurich, Switzerland.
-2. Select a rolling 7, 15, or 21-day range, or exact start and end dates.
+2. Select the continuous previous-7/next-7 view, a historical rolling range, or exact start and end dates.
 3. Aggregate hourly source data into day, 12-hour, 6-hour, or 3-hour buckets.
 4. Load all locations concurrently. Successful locations remain usable when another location fails.
 5. Switch the loaded result between graph and table views without refetching.
@@ -25,17 +25,28 @@ This inventory was produced by systematically exercising the live prototype at `
 
 ## Metrics and aggregation
 
-Hourly data is fetched from Open-Meteo's historical weather and air-quality endpoints in the resolved location timezone.
+Hourly data is fetched from Open-Meteo's historical, forecast, and air-quality endpoints in the resolved location timezone.
 
 | Group | Graphs | Table-only values | Aggregation |
 | --- | --- | --- | --- |
 | Temperature | Minimum/average/maximum range | — | min, arithmetic mean, max |
-| Precipitation | Rain, snowfall | — | sum |
+| Precipitation | Rain, snowfall, forecast precipitation probability | — | sum; probability max |
 | Sunshine | Sunshine duration, average UV | maximum UV | sunshine seconds to hours; UV mean/max |
 | Wind | Mean speed, peak gust | dominant direction | speed mean; gust max; circular direction mean |
 | Air quality | European AQI, PM2.5, PM10, NO2, O3, SO2 averages | maximum AQI | mean; AQI max |
 
 The graph view contains 13 charts. Temperature uses min-to-max whiskers with average markers. Air-quality graphs include EEA category guide bands and legends. Graph points expose focusable hover/focus tooltips. Long timelines scroll horizontally.
+
+## Continuous forecast timeline
+
+- The default range joins the previous seven complete days to today plus the next six forecast days.
+- A labeled vertical line marks the historical/forecast boundary and the future region has a light tint.
+- Historical lines and markers are solid/filled; forecast lines and range whiskers are dashed and forecast markers are hollow.
+- Forecast table rows are tinted and carry a forecast badge.
+- Forecast tooltips and table badges show a lead-time confidence guide: higher at 0–2 days, medium at 3–5 days, and lower from day 6.
+- The interface explicitly says this guide is based on lead time and is not an ensemble-derived probability.
+- Forecast provenance, confidence, and lead days are included in CSV exports.
+- No best/worst location ranking is added.
 
 ## Tables
 
@@ -66,7 +77,7 @@ The graph view contains 13 charts. Temperature uses min-to-max whiskers with ave
 
 CSV export contains one row per visible location and bucket. The stable columns are:
 
-`location_query`, `location_label`, `latitude`, `longitude`, `timezone`, `bucket_key`, `bucket_label`, `temperature_min_c`, `temperature_avg_c`, `temperature_max_c`, `precipitation_sum_mm`, `snowfall_sum_cm`, `sunshine_hours`, `uv_avg`, `uv_max`, `wind_speed_avg_kmh`, `wind_gust_max_kmh`, `wind_direction_deg`, `aqi_avg`, `aqi_max`, `pm25_avg_ugm3`, `pm10_avg_ugm3`, `no2_avg_ugm3`, `ozone_avg_ugm3`, `so2_avg_ugm3`.
+`location_query`, `location_label`, `latitude`, `longitude`, `timezone`, `bucket_key`, `bucket_label`, `data_kind`, `forecast_confidence`, `forecast_lead_days`, `temperature_min_c`, `temperature_avg_c`, `temperature_max_c`, `precipitation_sum_mm`, `snowfall_sum_cm`, `precipitation_probability_max_pct`, `sunshine_hours`, `uv_avg`, `uv_max`, `wind_speed_avg_kmh`, `wind_gust_max_kmh`, `wind_direction_deg`, `aqi_avg`, `aqi_max`, `pm25_avg_ugm3`, `pm10_avg_ugm3`, `no2_avg_ugm3`, `ozone_avg_ugm3`, `so2_avg_ugm3`.
 
 The download is UTF-8 CSV with a BOM and a timestamped filename.
 

@@ -3,12 +3,14 @@ export const MAX_LOCATIONS = 20;
 
 export const ENDPOINTS = Object.freeze({
   weather: "https://archive-api.open-meteo.com/v1/archive",
+  forecast: "https://api.open-meteo.com/v1/forecast",
   geocode: "https://geocoding-api.open-meteo.com/v1/search",
   reverseGeocode: "https://geocoding-api.open-meteo.com/v1/reverse",
   air: "https://air-quality-api.open-meteo.com/v1/air-quality"
 });
 
 export const PRESETS = Object.freeze({ "7d": 7, "15d": 15, "21d": 21 });
+export const CONTINUOUS_PRESET = "7d7f";
 
 const colors = [
   "#0f5db8", "#12715c", "#c05621", "#9b2c5f", "#58657a",
@@ -65,11 +67,13 @@ export const METRIC_GROUPS = Object.freeze([
     tableTitle: "Precipitation and snow summary",
     metrics: [
       { id: "precipitationSum", title: "Precipitation sum", unit: "mm", digits: 1, floorZero: true },
-      { id: "snowfallSum", title: "Snowfall sum", unit: "cm", digits: 2, floorZero: true }
+      { id: "snowfallSum", title: "Snowfall sum", unit: "cm", digits: 2, floorZero: true },
+      { id: "precipitationProbabilityMax", title: "Precipitation probability", unit: "%", digits: 0, floorZero: true, forecastOnly: true }
     ],
     tableColumns: [
-      { key: "precipitationSum", label: "Rain (mm)", digits: 1 },
-      { key: "snowfallSum", label: "Snow (cm)", digits: 2 }
+      { key: "precipitationSum", label: "Precip. (mm)", digits: 1 },
+      { key: "snowfallSum", label: "Snow (cm)", digits: 2 },
+      { key: "precipitationProbabilityMax", label: "Chance (%)", digits: 0, forecastOnly: true }
     ]
   },
   {

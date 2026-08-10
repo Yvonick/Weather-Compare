@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { aggregateLocationData, formatBucketLabel, getBucketKey } from "../src/aggregate.js";
+import { aggregateLocationData, forecastConfidenceForLead, formatBucketLabel, getBucketKey } from "../src/aggregate.js";
 
 test("sub-day bucket keys use local clock boundaries", () => {
   assert.equal(getBucketKey("2026-08-06T11:30", "6h"), "2026-08-06T06:00");
@@ -65,4 +65,32 @@ test("weather and air timestamps merge into the same bucket", () => {
   assert.equal(result.rows.length, 1);
   assert.equal(result.rows[0].temperatureAvg, 12);
   assert.equal(result.rows[0].aqiAvg, 33);
+});
+
+test("forecast rows retain provenance and a lead-time confidence guide", () => {
+  const result = aggregateLocationData(
+    { query: "Test", label: "Test", latitude: 1, longitude: 2 },
+    { hourly: { time: ["2026-08-10T00:00", "2026-08-16T00:00"], temperature_2m: [12, 18], precipitation_probability: [30, 70] } },
+    { hourly: {} },
+    "day",
+    {},
+    { kind: "forecast", forecastStartDate: "2026-08-10" }
+  );
+  assert.equal(result.rows[0].dataKind, "forecast");
+  assert.equal(result.rows[0].forecastConfidence, "higher");
+  assert.equal(result.rows[1].forecastConfidence, "lower");
+  assert.equal(result.rows[1].precipitationProbabilityMax, 70);
+  assert.equal(forecastConfidenceForLead(4), "medium");
+});
+
+test("sum metrics remain missing when every source value is missing", () => {
+  const [row] = aggregateLocationData(
+    { query: "Test", label: "Test", latitude: 1, longitude: 2 },
+    { hourly: { time: ["2026-08-06T00:00"], temperature_2m: [12], precipitation: [null], snowfall: [null], sunshine_duration: [null] } },
+    { hourly: {} },
+    "day"
+  ).rows;
+  assert.equal(row.precipitationSum, null);
+  assert.equal(row.snowfallSum, null);
+  assert.equal(row.sunshineHours, null);
 });

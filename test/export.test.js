@@ -22,6 +22,7 @@ test("export rows keep the observed stable schema", () => {
   assert.deepEqual(Object.keys(row), EXPORT_HEADERS);
   assert.equal(row.location_query, "Paris, France");
   assert.equal(row.wind_direction_deg, 240);
+  assert.equal(row.data_kind, "historical");
 });
 
 test("CSV includes a BOM and safely quotes commas", () => {

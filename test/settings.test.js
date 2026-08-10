@@ -3,17 +3,20 @@ import assert from "node:assert/strict";
 import {
   buildShareUrl,
   createDefaultSettings,
+  describeWindow,
   normalizeSettings,
   settingsFromUrl,
+  syncPresetDates,
   validateSettings
 } from "../src/settings.js";
 
 const now = new Date("2026-08-06T12:00:00");
 
-test("defaults cover seven inclusive days", () => {
+test("defaults open the continuous historical and forecast timeline", () => {
   const settings = createDefaultSettings(now);
-  assert.equal(settings.startDate, "2026-07-31");
-  assert.equal(settings.endDate, "2026-08-06");
+  assert.equal(settings.preset, "7d7f");
+  assert.equal(settings.startDate, "2026-07-30");
+  assert.equal(settings.endDate, "2026-08-12");
   assert.deepEqual(settings.locations, ["Fulda, Germany", "Zurich, Switzerland"]);
 });
 
@@ -32,6 +35,13 @@ test("normalization limits locations and aligns hidden state", () => {
   assert.equal(settings.locations.length, 20);
   assert.deepEqual(settings.hiddenLocations.slice(0, 3), [true, false, true]);
   assert.equal(settings.highlightLocation, 19);
+});
+
+test("continuous preset spans seven historical and seven forecast days", () => {
+  const settings = syncPresetDates({ ...createDefaultSettings(now), preset: "7d7f" }, now);
+  assert.equal(settings.startDate, "2026-07-30");
+  assert.equal(settings.endDate, "2026-08-12");
+  assert.match(describeWindow(settings), /next 7 forecast days/);
 });
 
 test("share URLs round-trip all compatibility parameters", () => {
@@ -57,5 +67,14 @@ test("validation reports date ordering and empty locations", () => {
   assert.deepEqual(validateSettings(settings), [
     "Add at least one location.",
     "Start date must be before or equal to the end date."
+  ]);
+});
+
+test("validation limits the deterministic forecast horizon", () => {
+  const settings = createDefaultSettings(now);
+  settings.preset = "custom";
+  settings.endDate = "2026-08-26";
+  assert.deepEqual(validateSettings(settings, now), [
+    "Forecast dates can extend at most 16 days from today."
   ]);
 });

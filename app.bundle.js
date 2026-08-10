@@ -8,12 +8,14 @@ const MAX_LOCATIONS = 20;
 
 const ENDPOINTS = Object.freeze({
   weather: "https://archive-api.open-meteo.com/v1/archive",
+  forecast: "https://api.open-meteo.com/v1/forecast",
   geocode: "https://geocoding-api.open-meteo.com/v1/search",
   reverseGeocode: "https://geocoding-api.open-meteo.com/v1/reverse",
   air: "https://air-quality-api.open-meteo.com/v1/air-quality"
 });
 
 const PRESETS = Object.freeze({ "7d": 7, "15d": 15, "21d": 21 });
+const CONTINUOUS_PRESET = "7d7f";
 
 const colors = [
   "#0f5db8", "#12715c", "#c05621", "#9b2c5f", "#58657a",
@@ -70,11 +72,13 @@ const METRIC_GROUPS = Object.freeze([
     tableTitle: "Precipitation and snow summary",
     metrics: [
       { id: "precipitationSum", title: "Precipitation sum", unit: "mm", digits: 1, floorZero: true },
-      { id: "snowfallSum", title: "Snowfall sum", unit: "cm", digits: 2, floorZero: true }
+      { id: "snowfallSum", title: "Snowfall sum", unit: "cm", digits: 2, floorZero: true },
+      { id: "precipitationProbabilityMax", title: "Precipitation probability", unit: "%", digits: 0, floorZero: true, forecastOnly: true }
     ],
     tableColumns: [
-      { key: "precipitationSum", label: "Rain (mm)", digits: 1 },
-      { key: "snowfallSum", label: "Snow (cm)", digits: 2 }
+      { key: "precipitationSum", label: "Precip. (mm)", digits: 1 },
+      { key: "snowfallSum", label: "Snow (cm)", digits: 2 },
+      { key: "precipitationProbabilityMax", label: "Chance (%)", digits: 0, forecastOnly: true }
     ]
   },
   {
@@ -155,14 +159,14 @@ function isDateString(value) {
 }
 
 function createDefaultSettings(now = new Date()) {
-  const endDate = formatDate(now);
+  const today = formatDate(now);
   return {
     locations: ["Fulda, Germany", "Zurich, Switzerland"],
     hiddenLocations: [false, false],
     highlightLocation: null,
-    preset: "7d",
-    startDate: shiftDate(endDate, -6),
-    endDate,
+    preset: CONTINUOUS_PRESET,
+    startDate: shiftDate(today, -7),
+    endDate: shiftDate(today, 6),
     granularity: "day",
     view: "graph"
   };
@@ -184,7 +188,7 @@ function normalizeSettings(candidate = {}, now = new Date()) {
     locations: normalizedLocations,
     hiddenLocations,
     highlightLocation: Number.isInteger(rawHighlight) && rawHighlight >= 0 && rawHighlight < normalizedLocations.length ? rawHighlight : null,
-    preset: [...Object.keys(PRESETS), "custom"].includes(candidate.preset) ? candidate.preset : fallback.preset,
+    preset: [...Object.keys(PRESETS), CONTINUOUS_PRESET, "custom"].includes(candidate.preset) ? candidate.preset : fallback.preset,
     startDate: isDateString(candidate.startDate) ? candidate.startDate : fallback.startDate,
     endDate: isDateString(candidate.endDate) ? candidate.endDate : fallback.endDate,
     granularity: ["day", "12h", "6h", "3h"].includes(candidate.granularity) ? candidate.granularity : fallback.granularity,
@@ -194,12 +198,16 @@ function normalizeSettings(candidate = {}, now = new Date()) {
 
 function syncPresetDates(settings, now = new Date()) {
   if (settings.preset === "custom") return settings;
+  if (settings.preset === CONTINUOUS_PRESET) {
+    const today = formatDate(now);
+    return { ...settings, startDate: shiftDate(today, -7), endDate: shiftDate(today, 6) };
+  }
   const days = PRESETS[settings.preset] || PRESETS["7d"];
   const endDate = formatDate(now);
   return { ...settings, endDate, startDate: shiftDate(endDate, -(days - 1)) };
 }
 
-function validateSettings(settings) {
+function validateSettings(settings, now = new Date()) {
   const errors = [];
   const locations = settings.locations.map((value) => value.trim()).filter(Boolean);
   if (!locations.length) errors.push("Add at least one location.");
@@ -208,6 +216,8 @@ function validateSettings(settings) {
     errors.push("Provide a valid start and end date.");
   } else if (settings.startDate > settings.endDate) {
     errors.push("Start date must be before or equal to the end date.");
+  } else if (settings.endDate > shiftDate(formatDate(now), 15)) {
+    errors.push("Forecast dates can extend at most 16 days from today.");
   }
   return errors;
 }
@@ -265,6 +275,7 @@ function saveSettings(settings, storage) {
 }
 
 function describeWindow(settings) {
+  if (settings.preset === CONTINUOUS_PRESET) return "the previous 7 days plus the next 7 forecast days";
   if (PRESETS[settings.preset]) return `past ${PRESETS[settings.preset]} days`;
   return `${settings.startDate} to ${settings.endDate}`;
 }
@@ -295,7 +306,10 @@ function emptyBucket(key, granularity) {
     key,
     label: formatBucketLabel(key, granularity),
     temperatureMin: Infinity, temperatureMax: -Infinity, temperatureSum: 0, temperatureCount: 0,
-    precipitationSum: 0, snowfallSum: 0, sunshineSeconds: 0,
+    precipitationSum: 0, precipitationCount: 0,
+    snowfallSum: 0, snowfallCount: 0,
+    sunshineSeconds: 0, sunshineCount: 0,
+    precipitationProbabilityMax: -Infinity,
     uvSum: 0, uvCount: 0, uvMax: -Infinity,
     windSpeedSum: 0, windSpeedCount: 0, windGustMax: -Infinity,
     windDirectionSin: 0, windDirectionCos: 0, windDirectionCount: 0,
@@ -329,9 +343,22 @@ function ingestWeather(hourly = {}, ensureBucket) {
       bucket.temperatureSum += temperature;
       bucket.temperatureCount += 1;
     }
-    if (precipitation !== null) bucket.precipitationSum += precipitation;
-    if (snowfall !== null) bucket.snowfallSum += snowfall;
-    if (sunshine !== null) bucket.sunshineSeconds += sunshine;
+    if (precipitation !== null) {
+      bucket.precipitationSum += precipitation;
+      bucket.precipitationCount += 1;
+    }
+    if (snowfall !== null) {
+      bucket.snowfallSum += snowfall;
+      bucket.snowfallCount += 1;
+    }
+    if (sunshine !== null) {
+      bucket.sunshineSeconds += sunshine;
+      bucket.sunshineCount += 1;
+    }
+    const precipitationProbability = finiteAt(hourly.precipitation_probability, index);
+    if (precipitationProbability !== null) {
+      bucket.precipitationProbabilityMax = Math.max(bucket.precipitationProbabilityMax, precipitationProbability);
+    }
     addAverage(bucket, "windSpeed", speed);
     if (gust !== null) bucket.windGustMax = Math.max(bucket.windGustMax, gust);
     if (direction !== null) {
@@ -374,9 +401,10 @@ function finalize(bucket) {
     temperatureMin: bucket.temperatureCount ? bucket.temperatureMin : null,
     temperatureAvg: average(bucket, "temperature"),
     temperatureMax: bucket.temperatureCount ? bucket.temperatureMax : null,
-    precipitationSum: bucket.precipitationSum,
-    snowfallSum: bucket.snowfallSum,
-    sunshineHours: bucket.sunshineSeconds / 3600,
+    precipitationSum: bucket.precipitationCount ? bucket.precipitationSum : null,
+    snowfallSum: bucket.snowfallCount ? bucket.snowfallSum : null,
+    sunshineHours: bucket.sunshineCount ? bucket.sunshineSeconds / 3600 : null,
+    precipitationProbabilityMax: Number.isFinite(bucket.precipitationProbabilityMax) ? bucket.precipitationProbabilityMax : null,
     uvAvg: average(bucket, "uv"),
     uvMax: bucket.uvCount ? bucket.uvMax : null,
     windSpeedAvg: average(bucket, "windSpeed"),
@@ -392,7 +420,18 @@ function finalize(bucket) {
   };
 }
 
-function aggregateLocationData(resolved, weather, air, granularity, sourceLabels = {}) {
+function forecastConfidenceForLead(leadDays) {
+  if (!Number.isFinite(leadDays) || leadDays < 0) return null;
+  if (leadDays <= 2) return "higher";
+  if (leadDays <= 5) return "medium";
+  return "lower";
+}
+
+const daysBetween = (leftDate, rightDate) => Math.round(
+  (Date.parse(`${leftDate}T00:00:00Z`) - Date.parse(`${rightDate}T00:00:00Z`)) / 86400000
+);
+
+function aggregateLocationData(resolved, weather, air, granularity, sourceLabels = {}, period = {}) {
   const buckets = new Map();
   const ensureBucket = (time) => {
     const key = getBucketKey(time, granularity);
@@ -406,7 +445,18 @@ function aggregateLocationData(resolved, weather, air, granularity, sourceLabels
     timezone: weather.timezone || air.timezone || resolved.timezone || "auto",
     weatherSource: sourceLabels.weather || null,
     airSource: sourceLabels.air || null,
-    rows: [...buckets.values()].sort((left, right) => left.key.localeCompare(right.key)).map(finalize)
+    rows: [...buckets.values()].sort((left, right) => left.key.localeCompare(right.key)).map(finalize).map((row) => {
+      const dataKind = period.kind === "forecast" ? "forecast" : "historical";
+      const forecastLeadDays = dataKind === "forecast" && period.forecastStartDate
+        ? Math.max(0, daysBetween(row.key.slice(0, 10), period.forecastStartDate))
+        : null;
+      return {
+        ...row,
+        dataKind,
+        forecastLeadDays,
+        forecastConfidence: forecastConfidenceForLead(forecastLeadDays)
+      };
+    })
   };
 }
 
@@ -468,7 +518,8 @@ const wait = (milliseconds, signal) => new Promise((resolve, reject) => {
 
 function requestLabel(url) {
   if (url.hostname.includes("geocoding") || url.pathname.includes("geocoding")) return "geocoding";
-  if (url.pathname.includes("air-quality")) return "air-quality archive";
+  if (url.pathname.includes("air-quality")) return "air-quality data";
+  if (url.hostname === "api.open-meteo.com") return "weather forecast";
   if (url.pathname.includes("archive")) return "weather archive";
   return "data request";
 }
@@ -575,26 +626,67 @@ async function reverseGeocodeSource(latitude, longitude, signal) {
   }
 }
 
-function weatherUrl(resolved, settings) {
-  const url = new URL(ENDPOINTS.weather);
+const formatLocalDate = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const shiftLocalDate = (dateString, offsetDays) => {
+  const date = new Date(`${dateString}T12:00:00`);
+  date.setDate(date.getDate() + offsetDays);
+  return formatLocalDate(date);
+};
+
+function splitTimeline(settings, now = new Date()) {
+  const today = formatLocalDate(now);
+  const wantsForecast = settings.preset === "7d7f" || settings.endDate > today;
+  if (!wantsForecast) {
+    return [{ kind: "historical", startDate: settings.startDate, endDate: settings.endDate }];
+  }
+
+  const ranges = [];
+  if (settings.startDate < today) {
+    ranges.push({
+      kind: "historical",
+      startDate: settings.startDate,
+      endDate: settings.endDate < today ? settings.endDate : shiftLocalDate(today, -1)
+    });
+  }
+  if (settings.endDate >= today) {
+    ranges.push({
+      kind: "forecast",
+      startDate: settings.startDate > today ? settings.startDate : today,
+      endDate: settings.endDate,
+      forecastStartDate: today
+    });
+  }
+  return ranges;
+}
+
+function weatherUrl(resolved, range) {
+  const url = new URL(range.kind === "forecast" ? ENDPOINTS.forecast : ENDPOINTS.weather);
   url.searchParams.set("latitude", resolved.latitude);
   url.searchParams.set("longitude", resolved.longitude);
-  url.searchParams.set("start_date", settings.startDate);
-  url.searchParams.set("end_date", settings.endDate);
+  url.searchParams.set("start_date", range.startDate);
+  url.searchParams.set("end_date", range.endDate);
   url.searchParams.set("timezone", resolved.timezone);
-  url.searchParams.set("hourly", [
+  const variables = [
     "temperature_2m", "precipitation", "snowfall", "sunshine_duration",
     "wind_speed_10m", "wind_gusts_10m", "wind_direction_10m"
-  ].join(","));
+  ];
+  if (range.kind === "forecast") variables.push("precipitation_probability");
+  url.searchParams.set("hourly", variables.join(","));
   return url;
 }
 
-function airUrl(resolved, settings) {
+function airUrl(resolved, range) {
   const url = new URL(ENDPOINTS.air);
   url.searchParams.set("latitude", resolved.latitude);
   url.searchParams.set("longitude", resolved.longitude);
-  url.searchParams.set("start_date", settings.startDate);
-  url.searchParams.set("end_date", settings.endDate);
+  url.searchParams.set("start_date", range.startDate);
+  url.searchParams.set("end_date", range.endDate);
   url.searchParams.set("timezone", resolved.timezone);
   url.searchParams.set("hourly", [
     "european_aqi", "pm2_5", "pm10", "nitrogen_dioxide", "ozone", "sulphur_dioxide", "uv_index"
@@ -604,15 +696,45 @@ function airUrl(resolved, settings) {
 
 async function fetchLocationData(query, settings, signal) {
   const resolved = await geocodeLocation(query, signal);
-  const [weather, air] = await Promise.all([
-    fetchJson(weatherUrl(resolved, settings), signal),
-    fetchJson(airUrl(resolved, settings), signal)
-  ]);
-  const [weatherSource, airSource] = await Promise.all([
-    reverseGeocodeSource(weather.latitude, weather.longitude, signal),
-    reverseGeocodeSource(air.latitude, air.longitude, signal)
-  ]);
-  return aggregateLocationData(resolved, weather, air, settings.granularity, { weather: weatherSource, air: airSource });
+  const ranges = splitTimeline(settings);
+  const segments = await Promise.all(ranges.map(async (range) => {
+    const [weatherResult, airResult] = await Promise.allSettled([
+      fetchJson(weatherUrl(resolved, range), signal),
+      fetchJson(airUrl(resolved, range), signal)
+    ]);
+    if (weatherResult.status === "rejected") throw weatherResult.reason;
+    const weather = weatherResult.value;
+    const air = airResult.status === "fulfilled" ? airResult.value : { hourly: {} };
+    const [weatherSource, airSource] = await Promise.all([
+      reverseGeocodeSource(weather.latitude, weather.longitude, signal),
+      airResult.status === "fulfilled"
+        ? reverseGeocodeSource(air.latitude, air.longitude, signal)
+        : Promise.resolve(null)
+    ]);
+    const data = aggregateLocationData(
+      resolved,
+      weather,
+      air,
+      settings.granularity,
+      { weather: weatherSource, air: airSource },
+      range
+    );
+    return {
+      data,
+      notices: airResult.status === "rejected" ? [`${range.kind} air-quality data unavailable`] : []
+    };
+  }));
+
+  const rows = segments.flatMap((segment) => segment.data.rows).sort((left, right) => left.key.localeCompare(right.key));
+  const primary = segments[0]?.data || resolved;
+  return {
+    ...primary,
+    rows,
+    hasForecast: rows.some((row) => row.dataKind === "forecast"),
+    weatherSource: segments.map((segment) => segment.data.weatherSource).find(Boolean) || null,
+    airSource: segments.map((segment) => segment.data.airSource).find(Boolean) || null,
+    dataNotices: segments.flatMap((segment) => segment.notices)
+  };
 }
 
 
@@ -642,6 +764,7 @@ async function settleWithConcurrency(items, worker, concurrency = 4) {
 /* src/export.js */
 const EXPORT_HEADERS = [
   "location_query", "location_label", "latitude", "longitude", "timezone", "bucket_key", "bucket_label",
+  "data_kind", "forecast_confidence", "forecast_lead_days",
   "temperature_min_c", "temperature_avg_c", "temperature_max_c", "precipitation_sum_mm", "snowfall_sum_cm",
   "sunshine_hours", "uv_avg", "uv_max", "wind_speed_avg_kmh", "wind_gust_max_kmh", "wind_direction_deg",
   "aqi_avg", "aqi_max", "pm25_avg_ugm3", "pm10_avg_ugm3", "no2_avg_ugm3", "ozone_avg_ugm3", "so2_avg_ugm3"
@@ -656,6 +779,9 @@ function buildExportRows(series) {
     timezone: location.timezone,
     bucket_key: row.key,
     bucket_label: row.label,
+    data_kind: row.dataKind || "historical",
+    forecast_confidence: row.forecastConfidence || null,
+    forecast_lead_days: row.forecastLeadDays ?? null,
     temperature_min_c: row.temperatureMin,
     temperature_avg_c: row.temperatureAvg,
     temperature_max_c: row.temperatureMax,
@@ -767,10 +893,13 @@ function chartScale(metric, series) {
 }
 
 function tooltipText(location, row, metric) {
+  const forecastContext = row.dataKind === "forecast"
+    ? `Forecast · ${row.forecastConfidence || "unknown"} confidence (lead-time guide) · `
+    : "Historical · ";
   if (metric.type === "range") {
-    return `${location.label} · ${row.label} · Min ${formatNumber(row[metric.minKey], metric.digits)} ${metric.unit} · Avg ${formatNumber(row[metric.id], metric.digits)} ${metric.unit} · Max ${formatNumber(row[metric.maxKey], metric.digits)} ${metric.unit}`;
+    return `${location.label} · ${row.label} · ${forecastContext}Min ${formatNumber(row[metric.minKey], metric.digits)} ${metric.unit} · Avg ${formatNumber(row[metric.id], metric.digits)} ${metric.unit} · Max ${formatNumber(row[metric.maxKey], metric.digits)} ${metric.unit}`;
   }
-  return `${location.label} · ${row.label} · ${formatNumber(row[metric.id], metric.digits)} ${metric.unit}`;
+  return `${location.label} · ${row.label} · ${forecastContext}${formatNumber(row[metric.id], metric.digits)} ${metric.unit}`;
 }
 
 function attachTooltip(target, frame, text) {
@@ -805,6 +934,30 @@ function renderThresholdBands(svg, metric, scale, yFor, plotLeft, plotTop, plotW
     svg.append(svgNode("rect", { x: plotLeft, y: top, width: plotWidth, height: bottom - top, fill: band.fill }));
   }
   svg.append(svgNode("rect", { x: plotLeft, y: plotTop, width: plotWidth, height: plotHeight, fill: "none", stroke: "#d7d7d7" }));
+}
+
+function renderForecastRegion(svg, boundaryX, plotTop, plotRight, plotHeight) {
+  if (!Number.isFinite(boundaryX)) return;
+  svg.append(svgNode("rect", {
+    x: boundaryX,
+    y: plotTop,
+    width: Math.max(0, plotRight - boundaryX),
+    height: plotHeight,
+    fill: "#e8f2ee",
+    "fill-opacity": 0.72
+  }));
+  svg.append(svgNode("line", {
+    x1: boundaryX,
+    x2: boundaryX,
+    y1: plotTop,
+    y2: plotTop + plotHeight,
+    stroke: "#226047",
+    "stroke-width": 2,
+    "stroke-dasharray": "4 4"
+  }));
+  const nowLabel = svgNode("text", { x: boundaryX + 8, y: plotTop + 15, class: "forecast-axis-label" });
+  nowLabel.textContent = "NOW · FORECAST →";
+  svg.append(nowLabel);
 }
 
 function renderThresholdLegend(metric) {
@@ -847,9 +1000,25 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
   const scale = chartScale(metric, series);
   const yFor = (value) => margin.top + (scale.max - value) / (scale.max - scale.min) * plotHeight;
   const xFor = (index) => margin.left + (keys.length === 1 ? plotWidth / 2 : index / (keys.length - 1) * plotWidth);
-  const svg = svgNode("svg", { class: "chart-svg", viewBox: `0 0 ${width} ${height}`, width, height, role: "img", "aria-label": `${metric.title} line chart` });
+  const allRows = series.flatMap((location) => location.rows);
+  const rowForKey = new Map(keys.map((key) => [key, allRows.find((row) => row.key === key)]));
+  const forecastIndex = keys.findIndex((key) => rowForKey.get(key)?.dataKind === "forecast");
+  const forecastBoundaryX = forecastIndex < 0
+    ? null
+    : forecastIndex === 0
+      ? margin.left
+      : (xFor(forecastIndex - 1) + xFor(forecastIndex)) / 2;
+  const svg = svgNode("svg", {
+    class: "chart-svg",
+    viewBox: `0 0 ${width} ${height}`,
+    width,
+    height,
+    role: "img",
+    "aria-label": `${metric.title} historical and forecast line chart`
+  });
 
   renderThresholdBands(svg, metric, scale, yFor, margin.left, margin.top, plotWidth, plotHeight);
+  renderForecastRegion(svg, forecastBoundaryX, margin.top, width - margin.right, plotHeight);
   for (const tick of scale.ticks) {
     const y = yFor(tick);
     svg.append(svgNode("line", { x1: margin.left, x2: width - margin.right, y1: y, y2: y, stroke: "#d7d7d7", "stroke-width": 1 }));
@@ -859,7 +1028,8 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
   }
   keys.forEach((key, index) => {
     const label = svgNode("text", { x: xFor(index), y: height - margin.bottom + 24, transform: `rotate(-35 ${xFor(index)} ${height - margin.bottom + 24})`, "text-anchor": "end", class: "axis-label" });
-    const row = series.flatMap((location) => location.rows).find((candidate) => candidate.key === key);
+    const row = rowForKey.get(key);
+    if (row?.dataKind === "forecast") label.classList.add("forecast-date-label");
     label.textContent = row?.label || key;
     svg.append(label);
   });
@@ -872,13 +1042,27 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
       : (isHighlighted ? 5.2 : 3.4);
     const opacity = metric.type === "range" ? (isHighlighted ? 0.9 : 0.7) : 1;
     const rowByKey = new Map(location.rows.map((row) => [row.key, row]));
-    let path = "";
-    keys.forEach((key, index) => {
-      const value = rowByKey.get(key)?.[metric.id];
-      if (!Number.isFinite(value)) return;
-      path += `${path ? " L" : "M"} ${xFor(index)} ${yFor(value)}`;
-    });
-    if (path) svg.append(svgNode("path", { d: path, fill: "none", stroke: style.color, "stroke-width": lineWidth, "stroke-dasharray": style.dash, "stroke-linejoin": "round", "stroke-linecap": "round", opacity }));
+    const buildPath = (kind) => {
+      let path = "";
+      let drawing = false;
+      keys.forEach((key, index) => {
+        const row = rowByKey.get(key);
+        const value = row?.[metric.id];
+        const bridge = kind === "forecast" && forecastIndex > 0 && index === forecastIndex - 1;
+        const included = kind === "forecast" ? row?.dataKind === "forecast" || bridge : row?.dataKind !== "forecast";
+        if (!included || !Number.isFinite(value)) {
+          drawing = false;
+          return;
+        }
+        path += `${drawing ? " L" : " M"} ${xFor(index)} ${yFor(value)}`;
+        drawing = true;
+      });
+      return path.trim();
+    };
+    const historicalPath = buildPath("historical");
+    const forecastPath = buildPath("forecast");
+    if (historicalPath) svg.append(svgNode("path", { d: historicalPath, fill: "none", stroke: style.color, "stroke-width": lineWidth, "stroke-dasharray": style.dash, "stroke-linejoin": "round", "stroke-linecap": "round", opacity }));
+    if (forecastPath) svg.append(svgNode("path", { d: forecastPath, fill: "none", stroke: style.color, "stroke-width": lineWidth, "stroke-dasharray": "8 5", "stroke-linejoin": "round", "stroke-linecap": "round", opacity: opacity * 0.82 }));
 
     keys.forEach((key, index) => {
       const row = rowByKey.get(key);
@@ -886,15 +1070,25 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
       if (!row || !Number.isFinite(value)) return;
       const x = xFor(index);
       const y = yFor(value);
+      const isForecast = row.dataKind === "forecast";
       if (metric.type === "range" && Number.isFinite(row[metric.minKey]) && Number.isFinite(row[metric.maxKey])) {
         const minY = yFor(row[metric.minKey]);
         const maxY = yFor(row[metric.maxKey]);
-        svg.append(svgNode("line", { x1: x, x2: x, y1: minY, y2: maxY, stroke: style.color, "stroke-width": isHighlighted ? 3.2 : 2.3, opacity }));
-        svg.append(svgNode("line", { x1: x - 6, x2: x + 6, y1: minY, y2: minY, stroke: style.color, "stroke-width": isHighlighted ? 3.3 : 2.4, opacity }));
-        svg.append(svgNode("line", { x1: x - 6, x2: x + 6, y1: maxY, y2: maxY, stroke: style.color, "stroke-width": isHighlighted ? 3.3 : 2.4, opacity }));
+        const rangeAttributes = { stroke: style.color, "stroke-dasharray": isForecast ? "4 3" : "", opacity: isForecast ? opacity * 0.82 : opacity };
+        svg.append(svgNode("line", { x1: x, x2: x, y1: minY, y2: maxY, "stroke-width": isHighlighted ? 3.2 : 2.3, ...rangeAttributes }));
+        svg.append(svgNode("line", { x1: x - 6, x2: x + 6, y1: minY, y2: minY, "stroke-width": isHighlighted ? 3.3 : 2.4, ...rangeAttributes }));
+        svg.append(svgNode("line", { x1: x - 6, x2: x + 6, y1: maxY, y2: maxY, "stroke-width": isHighlighted ? 3.3 : 2.4, ...rangeAttributes }));
       }
       const markerRadius = metric.type === "range" ? (isHighlighted ? 4.9 : 4.1) : (isHighlighted ? 5.1 : 4.2);
-      const marker = svgNode("circle", { cx: x, cy: y, r: markerRadius, fill: style.color, stroke: "#fff", "stroke-width": isHighlighted ? 1.7 : 1.4, opacity });
+      const marker = svgNode("circle", {
+        cx: x,
+        cy: y,
+        r: markerRadius,
+        fill: isForecast ? "#fff" : style.color,
+        stroke: isForecast ? style.color : "#fff",
+        "stroke-width": isForecast ? (isHighlighted ? 3 : 2.4) : (isHighlighted ? 1.7 : 1.4),
+        opacity: isForecast ? 0.9 : opacity
+      });
       attachTooltip(marker, frame, tooltipText(location, row, metric));
       svg.append(marker);
     });
@@ -931,14 +1125,15 @@ function renderTable(group, series, granularity) {
   const bucketHead = create("th", null, granularity === "day" ? "Date" : "Time bucket");
   bucketHead.rowSpan = 2;
   locationRow.append(bucketHead);
+  const columns = group.tableColumns.filter((column) => !column.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[column.key]))));
   series.forEach((location) => {
     const cell = create("th", null, location.label);
-    cell.colSpan = group.tableColumns.length;
+    cell.colSpan = columns.length;
     cell.scope = "colgroup";
     locationRow.append(cell);
   });
   const metricRow = create("tr");
-  series.forEach(() => group.tableColumns.forEach((column) => {
+  series.forEach(() => columns.forEach((column) => {
     const cell = create("th", null, column.label);
     cell.scope = "col";
     metricRow.append(cell);
@@ -948,13 +1143,20 @@ function renderTable(group, series, granularity) {
   const body = create("tbody");
   const keys = collectBucketKeys(series);
   const rowsByLocation = series.map((location) => new Map(location.rows.map((row) => [row.key, row])));
+  let forecastStarted = false;
   for (const key of keys) {
     const rowNode = create("tr");
     const representative = rowsByLocation.map((map) => map.get(key)).find(Boolean);
     const bucket = create("th", null, representative?.label || key);
     bucket.scope = "row";
+    if (representative?.dataKind === "forecast") {
+      rowNode.className = `forecast-table-row ${forecastStarted ? "" : "is-first-forecast"}`.trim();
+      forecastStarted = true;
+      const badge = create("small", "forecast-row-badge", `Forecast · ${representative.forecastConfidence || "unknown"} confidence`);
+      bucket.append(badge);
+    }
     rowNode.append(bucket);
-    rowsByLocation.forEach((map) => group.tableColumns.forEach((column) => {
+    rowsByLocation.forEach((map) => columns.forEach((column) => {
       const value = map.get(key)?.[column.key];
       rowNode.append(create("td", null, column.formatter === "direction" ? formatDirection(value) : formatNumber(value, column.digits)));
     }));
@@ -982,8 +1184,9 @@ function renderGroup(group, series, settings, onPopout) {
   } else if (settings.view === "table") {
     article.append(renderTable(group, series, settings.granularity));
   } else {
-    const grid = create("div", `chart-grid ${group.metrics.length === 1 ? "single" : ""}`);
-    group.metrics.forEach((metric) => grid.append(renderChartCard(metric, series, settings.highlightLocation, onPopout)));
+    const metrics = group.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
+    const grid = create("div", `chart-grid ${metrics.length === 1 ? "single" : ""}`);
+    metrics.forEach((metric) => grid.append(renderChartCard(metric, series, settings.highlightLocation, onPopout)));
     article.append(grid);
   }
   return article;
@@ -1079,6 +1282,7 @@ const elements = {
   share: document.querySelector("#share-button"),
   errors: document.querySelector("#error-list"),
   status: document.querySelector("#status"),
+  timelineGuide: document.querySelector("#timeline-guide"),
   legend: document.querySelector("#series-legend"),
   dashboard: document.querySelector("#dashboard"),
   popout: document.querySelector("#chart-popout")
@@ -1091,6 +1295,7 @@ let failures = [];
 let loading = false;
 let suggestionTimer = null;
 let suggestionRequest = null;
+let activeLoadRequest = null;
 let locationSearch = {
   index: null,
   query: "",
@@ -1206,6 +1411,9 @@ function renderControls() {
   elements.granularity.value = settings.granularity;
   elements.view.value = settings.view;
   elements.load.disabled = loading;
+  const today = new Date();
+  const todayString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  elements.timelineGuide.hidden = !(settings.preset === CONTINUOUS_PRESET || settings.endDate > todayString || loadedData.some((location) => location.hasForecast));
   renderLocationControls();
   persist();
 }
@@ -1239,6 +1447,12 @@ function renderLegend(series) {
     const sources = document.createElement("small");
     sources.textContent = `Weather: ${location.weatherSource || "source grid"} · Air: ${location.airSource || "source grid"}`;
     content.append(name, query, sources);
+    if (location.dataNotices?.length) {
+      const notice = document.createElement("small");
+      notice.className = "data-notice";
+      notice.textContent = location.dataNotices.join(" · ");
+      content.append(notice);
+    }
     item.append(swatch, content);
     elements.legend.append(item);
   });
@@ -1419,10 +1633,20 @@ async function loadComparison() {
   const remappedHighlight = entries.findIndex((entry) => entry.originalIndex === highlightedOriginalIndex);
   settings.highlightLocation = remappedHighlight >= 0 ? remappedHighlight : null;
 
+  activeLoadRequest?.abort();
+  const request = new AbortController();
+  activeLoadRequest = request;
+  const requestSettings = {
+    ...settings,
+    locations: [...settings.locations],
+    hiddenLocations: [...settings.hiddenLocations]
+  };
   loading = true;
   renderControls();
   setStatus(`Loading ${entries.length} location${entries.length === 1 ? "" : "s"} for ${describeWindow(settings)}.`);
-  const results = await settleWithConcurrency(entries, (entry) => fetchLocationData(entry.value, settings), 4);
+  const results = await settleWithConcurrency(entries, (entry) => fetchLocationData(entry.value, requestSettings, request.signal), 4);
+  if (activeLoadRequest !== request) return;
+  activeLoadRequest = null;
   loadedData = [];
   failures = [];
   results.forEach((result, index) => {
@@ -1565,6 +1789,9 @@ elements.view.addEventListener("change", () => {
 });
 
 elements.reset.addEventListener("click", () => {
+  activeLoadRequest?.abort();
+  activeLoadRequest = null;
+  loading = false;
   settings = createDefaultSettings();
   loadedData = [];
   failures = [];

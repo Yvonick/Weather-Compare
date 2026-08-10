@@ -1,6 +1,6 @@
 # Weather Compare
 
-A dependency-free web application for comparing historical weather and air-quality data across up to 20 places. It uses the public Open-Meteo APIs and can be hosted as static files, including on GitHub Pages.
+A dependency-free web application for comparing historical and forecast weather and air-quality data across up to 20 places. The default view joins the previous seven complete days to a seven-day forecast on one continuous timeline. It uses the public Open-Meteo APIs and can be hosted as static files, including on GitHub Pages and GPT Sites.
 
 ## Run locally
 
@@ -23,7 +23,7 @@ npm.cmd run check
 
 ## Project structure
 
-- `src/api.js` — Open-Meteo geocoding, archive, air-quality, and reverse-geocoding requests
+- `src/api.js` — Open-Meteo geocoding, historical, forecast, air-quality, and reverse-geocoding requests
 - `src/aggregate.js` — deterministic hourly-to-bucket aggregation
 - `src/settings.js` — defaults, validation, persistence, and share-link serialization
 - `src/charts.js` — SVG charts, tables, tooltips, and chart pop-outs

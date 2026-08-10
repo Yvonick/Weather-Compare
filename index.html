@@ -3,16 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Compare historical weather and air quality across places.">
+  <meta name="description" content="Compare historical and forecast weather and air quality across places.">
   <title>Weather Compare</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
   <main class="page-shell">
     <header class="hero">
-      <p class="eyebrow">Weather Compare / Historical Weather Panels</p>
-      <h1>Compare past weather across places.</h1>
-      <p class="hero-copy">Fetch historical weather and air-quality data for up to 20 locations at once, aggregate it by day or sub-day windows, and switch between graph and table views. Settings stay in this browser between sessions.</p>
+      <p class="eyebrow">Weather Compare / Past + Forecast Panels</p>
+      <h1>Compare weather across places and time.</h1>
+      <p class="hero-copy">Place recent conditions and upcoming forecasts on one continuous timeline for up to 20 locations, aggregate by day or sub-day windows, and switch between graph and table views. Settings stay in this browser between sessions.</p>
     </header>
 
     <div class="app-layout">
@@ -21,7 +21,7 @@
           <div>
             <p class="eyebrow">Parameters</p>
             <h2>Dataset controls</h2>
-            <p class="note">Open-Meteo historical weather, geocoding, and air-quality APIs</p>
+            <p class="note">Open-Meteo historical, forecast, geocoding, and air-quality APIs</p>
           </div>
 
           <div class="field-block">
@@ -34,6 +34,7 @@
           <label class="field">
             <span>Time window</span>
             <select id="time-window-select" name="preset">
+              <option value="7d7f">Previous 7 + next 7 days</option>
               <option value="7d">Past 7 days</option>
               <option value="15d">Past 15 days</option>
               <option value="21d">Past 21 days</option>
@@ -74,6 +75,15 @@
 
           <div id="error-list" class="error-list" role="alert"></div>
           <p id="status" class="status" aria-live="polite">Preparing the initial comparison.</p>
+          <div id="timeline-guide" class="timeline-guide" hidden>
+            <p class="eyebrow">Timeline key</p>
+            <div class="timeline-key-items" aria-label="Historical and forecast styles">
+              <span><i class="key-marker historical-marker"></i>Historical</span>
+              <span><i class="key-marker forecast-marker"></i>Forecast</span>
+              <span><i class="key-now-line"></i>Now</span>
+            </div>
+            <p>Forecast rows are shaded and chart markers are hollow. Confidence is a transparent lead-time guide for this prototype, not an ensemble-derived probability.</p>
+          </div>
         </form>
 
         <section class="panel legend-panel" aria-labelledby="legend-title">
@@ -90,6 +100,7 @@
           <h2>Data reference</h2>
           <p class="description">Official documentation for the APIs and thresholds used on this page.</p>
           <ul class="source-list">
+            <li><a href="https://open-meteo.com/en/docs" target="_blank" rel="noreferrer">Open-Meteo Forecast API</a> — upcoming weather variables and precipitation probability</li>
             <li><a href="https://open-meteo.com/en/docs/historical-weather-api" target="_blank" rel="noreferrer">Open-Meteo Historical Weather API</a> — archived weather variables</li>
             <li><a href="https://open-meteo.com/en/docs/air-quality-api" target="_blank" rel="noreferrer">Open-Meteo Air Quality API</a> — air-quality indicators and UV index</li>
             <li><a href="https://open-meteo.com/en/docs/geocoding-api" target="_blank" rel="noreferrer">Open-Meteo Geocoding API</a> — place lookup and source labels</li>

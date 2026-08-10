@@ -1,4 +1,4 @@
-import { MAX_LOCATIONS, PRESETS, STORAGE_KEY } from "./config.js";
+import { CONTINUOUS_PRESET, MAX_LOCATIONS, PRESETS, STORAGE_KEY } from "./config.js";
 
 export function formatDate(date) {
   const year = date.getFullYear();
@@ -18,14 +18,14 @@ export function isDateString(value) {
 }
 
 export function createDefaultSettings(now = new Date()) {
-  const endDate = formatDate(now);
+  const today = formatDate(now);
   return {
     locations: ["Fulda, Germany", "Zurich, Switzerland"],
     hiddenLocations: [false, false],
     highlightLocation: null,
-    preset: "7d",
-    startDate: shiftDate(endDate, -6),
-    endDate,
+    preset: CONTINUOUS_PRESET,
+    startDate: shiftDate(today, -7),
+    endDate: shiftDate(today, 6),
     granularity: "day",
     view: "graph"
   };
@@ -47,7 +47,7 @@ export function normalizeSettings(candidate = {}, now = new Date()) {
     locations: normalizedLocations,
     hiddenLocations,
     highlightLocation: Number.isInteger(rawHighlight) && rawHighlight >= 0 && rawHighlight < normalizedLocations.length ? rawHighlight : null,
-    preset: [...Object.keys(PRESETS), "custom"].includes(candidate.preset) ? candidate.preset : fallback.preset,
+    preset: [...Object.keys(PRESETS), CONTINUOUS_PRESET, "custom"].includes(candidate.preset) ? candidate.preset : fallback.preset,
     startDate: isDateString(candidate.startDate) ? candidate.startDate : fallback.startDate,
     endDate: isDateString(candidate.endDate) ? candidate.endDate : fallback.endDate,
     granularity: ["day", "12h", "6h", "3h"].includes(candidate.granularity) ? candidate.granularity : fallback.granularity,
@@ -57,12 +57,16 @@ export function normalizeSettings(candidate = {}, now = new Date()) {
 
 export function syncPresetDates(settings, now = new Date()) {
   if (settings.preset === "custom") return settings;
+  if (settings.preset === CONTINUOUS_PRESET) {
+    const today = formatDate(now);
+    return { ...settings, startDate: shiftDate(today, -7), endDate: shiftDate(today, 6) };
+  }
   const days = PRESETS[settings.preset] || PRESETS["7d"];
   const endDate = formatDate(now);
   return { ...settings, endDate, startDate: shiftDate(endDate, -(days - 1)) };
 }
 
-export function validateSettings(settings) {
+export function validateSettings(settings, now = new Date()) {
   const errors = [];
   const locations = settings.locations.map((value) => value.trim()).filter(Boolean);
   if (!locations.length) errors.push("Add at least one location.");
@@ -71,6 +75,8 @@ export function validateSettings(settings) {
     errors.push("Provide a valid start and end date.");
   } else if (settings.startDate > settings.endDate) {
     errors.push("Start date must be before or equal to the end date.");
+  } else if (settings.endDate > shiftDate(formatDate(now), 15)) {
+    errors.push("Forecast dates can extend at most 16 days from today.");
   }
   return errors;
 }
@@ -128,6 +134,7 @@ export function saveSettings(settings, storage) {
 }
 
 export function describeWindow(settings) {
+  if (settings.preset === CONTINUOUS_PRESET) return "the previous 7 days plus the next 7 forecast days";
   if (PRESETS[settings.preset]) return `past ${PRESETS[settings.preset]} days`;
   return `${settings.startDate} to ${settings.endDate}`;
 }

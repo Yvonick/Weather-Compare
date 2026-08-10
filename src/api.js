@@ -53,7 +53,8 @@ const wait = (milliseconds, signal) => new Promise((resolve, reject) => {
 
 function requestLabel(url) {
   if (url.hostname.includes("geocoding") || url.pathname.includes("geocoding")) return "geocoding";
-  if (url.pathname.includes("air-quality")) return "air-quality archive";
+  if (url.pathname.includes("air-quality")) return "air-quality data";
+  if (url.hostname === "api.open-meteo.com") return "weather forecast";
   if (url.pathname.includes("archive")) return "weather archive";
   return "data request";
 }
@@ -160,26 +161,67 @@ async function reverseGeocodeSource(latitude, longitude, signal) {
   }
 }
 
-function weatherUrl(resolved, settings) {
-  const url = new URL(ENDPOINTS.weather);
+const formatLocalDate = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const shiftLocalDate = (dateString, offsetDays) => {
+  const date = new Date(`${dateString}T12:00:00`);
+  date.setDate(date.getDate() + offsetDays);
+  return formatLocalDate(date);
+};
+
+export function splitTimeline(settings, now = new Date()) {
+  const today = formatLocalDate(now);
+  const wantsForecast = settings.preset === "7d7f" || settings.endDate > today;
+  if (!wantsForecast) {
+    return [{ kind: "historical", startDate: settings.startDate, endDate: settings.endDate }];
+  }
+
+  const ranges = [];
+  if (settings.startDate < today) {
+    ranges.push({
+      kind: "historical",
+      startDate: settings.startDate,
+      endDate: settings.endDate < today ? settings.endDate : shiftLocalDate(today, -1)
+    });
+  }
+  if (settings.endDate >= today) {
+    ranges.push({
+      kind: "forecast",
+      startDate: settings.startDate > today ? settings.startDate : today,
+      endDate: settings.endDate,
+      forecastStartDate: today
+    });
+  }
+  return ranges;
+}
+
+function weatherUrl(resolved, range) {
+  const url = new URL(range.kind === "forecast" ? ENDPOINTS.forecast : ENDPOINTS.weather);
   url.searchParams.set("latitude", resolved.latitude);
   url.searchParams.set("longitude", resolved.longitude);
-  url.searchParams.set("start_date", settings.startDate);
-  url.searchParams.set("end_date", settings.endDate);
+  url.searchParams.set("start_date", range.startDate);
+  url.searchParams.set("end_date", range.endDate);
   url.searchParams.set("timezone", resolved.timezone);
-  url.searchParams.set("hourly", [
+  const variables = [
     "temperature_2m", "precipitation", "snowfall", "sunshine_duration",
     "wind_speed_10m", "wind_gusts_10m", "wind_direction_10m"
-  ].join(","));
+  ];
+  if (range.kind === "forecast") variables.push("precipitation_probability");
+  url.searchParams.set("hourly", variables.join(","));
   return url;
 }
 
-function airUrl(resolved, settings) {
+function airUrl(resolved, range) {
   const url = new URL(ENDPOINTS.air);
   url.searchParams.set("latitude", resolved.latitude);
   url.searchParams.set("longitude", resolved.longitude);
-  url.searchParams.set("start_date", settings.startDate);
-  url.searchParams.set("end_date", settings.endDate);
+  url.searchParams.set("start_date", range.startDate);
+  url.searchParams.set("end_date", range.endDate);
   url.searchParams.set("timezone", resolved.timezone);
   url.searchParams.set("hourly", [
     "european_aqi", "pm2_5", "pm10", "nitrogen_dioxide", "ozone", "sulphur_dioxide", "uv_index"
@@ -189,13 +231,43 @@ function airUrl(resolved, settings) {
 
 export async function fetchLocationData(query, settings, signal) {
   const resolved = await geocodeLocation(query, signal);
-  const [weather, air] = await Promise.all([
-    fetchJson(weatherUrl(resolved, settings), signal),
-    fetchJson(airUrl(resolved, settings), signal)
-  ]);
-  const [weatherSource, airSource] = await Promise.all([
-    reverseGeocodeSource(weather.latitude, weather.longitude, signal),
-    reverseGeocodeSource(air.latitude, air.longitude, signal)
-  ]);
-  return aggregateLocationData(resolved, weather, air, settings.granularity, { weather: weatherSource, air: airSource });
+  const ranges = splitTimeline(settings);
+  const segments = await Promise.all(ranges.map(async (range) => {
+    const [weatherResult, airResult] = await Promise.allSettled([
+      fetchJson(weatherUrl(resolved, range), signal),
+      fetchJson(airUrl(resolved, range), signal)
+    ]);
+    if (weatherResult.status === "rejected") throw weatherResult.reason;
+    const weather = weatherResult.value;
+    const air = airResult.status === "fulfilled" ? airResult.value : { hourly: {} };
+    const [weatherSource, airSource] = await Promise.all([
+      reverseGeocodeSource(weather.latitude, weather.longitude, signal),
+      airResult.status === "fulfilled"
+        ? reverseGeocodeSource(air.latitude, air.longitude, signal)
+        : Promise.resolve(null)
+    ]);
+    const data = aggregateLocationData(
+      resolved,
+      weather,
+      air,
+      settings.granularity,
+      { weather: weatherSource, air: airSource },
+      range
+    );
+    return {
+      data,
+      notices: airResult.status === "rejected" ? [`${range.kind} air-quality data unavailable`] : []
+    };
+  }));
+
+  const rows = segments.flatMap((segment) => segment.data.rows).sort((left, right) => left.key.localeCompare(right.key));
+  const primary = segments[0]?.data || resolved;
+  return {
+    ...primary,
+    rows,
+    hasForecast: rows.some((row) => row.dataKind === "forecast"),
+    weatherSource: segments.map((segment) => segment.data.weatherSource).find(Boolean) || null,
+    airSource: segments.map((segment) => segment.data.airSource).find(Boolean) || null,
+    dataNotices: segments.flatMap((segment) => segment.notices)
+  };
 }

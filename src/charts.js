@@ -61,10 +61,13 @@ function chartScale(metric, series) {
 }
 
 function tooltipText(location, row, metric) {
+  const forecastContext = row.dataKind === "forecast"
+    ? `Forecast · ${row.forecastConfidence || "unknown"} confidence (lead-time guide) · `
+    : "Historical · ";
   if (metric.type === "range") {
-    return `${location.label} · ${row.label} · Min ${formatNumber(row[metric.minKey], metric.digits)} ${metric.unit} · Avg ${formatNumber(row[metric.id], metric.digits)} ${metric.unit} · Max ${formatNumber(row[metric.maxKey], metric.digits)} ${metric.unit}`;
+    return `${location.label} · ${row.label} · ${forecastContext}Min ${formatNumber(row[metric.minKey], metric.digits)} ${metric.unit} · Avg ${formatNumber(row[metric.id], metric.digits)} ${metric.unit} · Max ${formatNumber(row[metric.maxKey], metric.digits)} ${metric.unit}`;
   }
-  return `${location.label} · ${row.label} · ${formatNumber(row[metric.id], metric.digits)} ${metric.unit}`;
+  return `${location.label} · ${row.label} · ${forecastContext}${formatNumber(row[metric.id], metric.digits)} ${metric.unit}`;
 }
 
 function attachTooltip(target, frame, text) {
@@ -99,6 +102,30 @@ function renderThresholdBands(svg, metric, scale, yFor, plotLeft, plotTop, plotW
     svg.append(svgNode("rect", { x: plotLeft, y: top, width: plotWidth, height: bottom - top, fill: band.fill }));
   }
   svg.append(svgNode("rect", { x: plotLeft, y: plotTop, width: plotWidth, height: plotHeight, fill: "none", stroke: "#d7d7d7" }));
+}
+
+function renderForecastRegion(svg, boundaryX, plotTop, plotRight, plotHeight) {
+  if (!Number.isFinite(boundaryX)) return;
+  svg.append(svgNode("rect", {
+    x: boundaryX,
+    y: plotTop,
+    width: Math.max(0, plotRight - boundaryX),
+    height: plotHeight,
+    fill: "#e8f2ee",
+    "fill-opacity": 0.72
+  }));
+  svg.append(svgNode("line", {
+    x1: boundaryX,
+    x2: boundaryX,
+    y1: plotTop,
+    y2: plotTop + plotHeight,
+    stroke: "#226047",
+    "stroke-width": 2,
+    "stroke-dasharray": "4 4"
+  }));
+  const nowLabel = svgNode("text", { x: boundaryX + 8, y: plotTop + 15, class: "forecast-axis-label" });
+  nowLabel.textContent = "NOW · FORECAST →";
+  svg.append(nowLabel);
 }
 
 function renderThresholdLegend(metric) {
@@ -141,9 +168,25 @@ export function renderChartFrame(container, metric, series, highlightIndex, { zo
   const scale = chartScale(metric, series);
   const yFor = (value) => margin.top + (scale.max - value) / (scale.max - scale.min) * plotHeight;
   const xFor = (index) => margin.left + (keys.length === 1 ? plotWidth / 2 : index / (keys.length - 1) * plotWidth);
-  const svg = svgNode("svg", { class: "chart-svg", viewBox: `0 0 ${width} ${height}`, width, height, role: "img", "aria-label": `${metric.title} line chart` });
+  const allRows = series.flatMap((location) => location.rows);
+  const rowForKey = new Map(keys.map((key) => [key, allRows.find((row) => row.key === key)]));
+  const forecastIndex = keys.findIndex((key) => rowForKey.get(key)?.dataKind === "forecast");
+  const forecastBoundaryX = forecastIndex < 0
+    ? null
+    : forecastIndex === 0
+      ? margin.left
+      : (xFor(forecastIndex - 1) + xFor(forecastIndex)) / 2;
+  const svg = svgNode("svg", {
+    class: "chart-svg",
+    viewBox: `0 0 ${width} ${height}`,
+    width,
+    height,
+    role: "img",
+    "aria-label": `${metric.title} historical and forecast line chart`
+  });
 
   renderThresholdBands(svg, metric, scale, yFor, margin.left, margin.top, plotWidth, plotHeight);
+  renderForecastRegion(svg, forecastBoundaryX, margin.top, width - margin.right, plotHeight);
   for (const tick of scale.ticks) {
     const y = yFor(tick);
     svg.append(svgNode("line", { x1: margin.left, x2: width - margin.right, y1: y, y2: y, stroke: "#d7d7d7", "stroke-width": 1 }));
@@ -153,7 +196,8 @@ export function renderChartFrame(container, metric, series, highlightIndex, { zo
   }
   keys.forEach((key, index) => {
     const label = svgNode("text", { x: xFor(index), y: height - margin.bottom + 24, transform: `rotate(-35 ${xFor(index)} ${height - margin.bottom + 24})`, "text-anchor": "end", class: "axis-label" });
-    const row = series.flatMap((location) => location.rows).find((candidate) => candidate.key === key);
+    const row = rowForKey.get(key);
+    if (row?.dataKind === "forecast") label.classList.add("forecast-date-label");
     label.textContent = row?.label || key;
     svg.append(label);
   });
@@ -166,13 +210,27 @@ export function renderChartFrame(container, metric, series, highlightIndex, { zo
       : (isHighlighted ? 5.2 : 3.4);
     const opacity = metric.type === "range" ? (isHighlighted ? 0.9 : 0.7) : 1;
     const rowByKey = new Map(location.rows.map((row) => [row.key, row]));
-    let path = "";
-    keys.forEach((key, index) => {
-      const value = rowByKey.get(key)?.[metric.id];
-      if (!Number.isFinite(value)) return;
-      path += `${path ? " L" : "M"} ${xFor(index)} ${yFor(value)}`;
-    });
-    if (path) svg.append(svgNode("path", { d: path, fill: "none", stroke: style.color, "stroke-width": lineWidth, "stroke-dasharray": style.dash, "stroke-linejoin": "round", "stroke-linecap": "round", opacity }));
+    const buildPath = (kind) => {
+      let path = "";
+      let drawing = false;
+      keys.forEach((key, index) => {
+        const row = rowByKey.get(key);
+        const value = row?.[metric.id];
+        const bridge = kind === "forecast" && forecastIndex > 0 && index === forecastIndex - 1;
+        const included = kind === "forecast" ? row?.dataKind === "forecast" || bridge : row?.dataKind !== "forecast";
+        if (!included || !Number.isFinite(value)) {
+          drawing = false;
+          return;
+        }
+        path += `${drawing ? " L" : " M"} ${xFor(index)} ${yFor(value)}`;
+        drawing = true;
+      });
+      return path.trim();
+    };
+    const historicalPath = buildPath("historical");
+    const forecastPath = buildPath("forecast");
+    if (historicalPath) svg.append(svgNode("path", { d: historicalPath, fill: "none", stroke: style.color, "stroke-width": lineWidth, "stroke-dasharray": style.dash, "stroke-linejoin": "round", "stroke-linecap": "round", opacity }));
+    if (forecastPath) svg.append(svgNode("path", { d: forecastPath, fill: "none", stroke: style.color, "stroke-width": lineWidth, "stroke-dasharray": "8 5", "stroke-linejoin": "round", "stroke-linecap": "round", opacity: opacity * 0.82 }));
 
     keys.forEach((key, index) => {
       const row = rowByKey.get(key);
@@ -180,15 +238,25 @@ export function renderChartFrame(container, metric, series, highlightIndex, { zo
       if (!row || !Number.isFinite(value)) return;
       const x = xFor(index);
       const y = yFor(value);
+      const isForecast = row.dataKind === "forecast";
       if (metric.type === "range" && Number.isFinite(row[metric.minKey]) && Number.isFinite(row[metric.maxKey])) {
         const minY = yFor(row[metric.minKey]);
         const maxY = yFor(row[metric.maxKey]);
-        svg.append(svgNode("line", { x1: x, x2: x, y1: minY, y2: maxY, stroke: style.color, "stroke-width": isHighlighted ? 3.2 : 2.3, opacity }));
-        svg.append(svgNode("line", { x1: x - 6, x2: x + 6, y1: minY, y2: minY, stroke: style.color, "stroke-width": isHighlighted ? 3.3 : 2.4, opacity }));
-        svg.append(svgNode("line", { x1: x - 6, x2: x + 6, y1: maxY, y2: maxY, stroke: style.color, "stroke-width": isHighlighted ? 3.3 : 2.4, opacity }));
+        const rangeAttributes = { stroke: style.color, "stroke-dasharray": isForecast ? "4 3" : "", opacity: isForecast ? opacity * 0.82 : opacity };
+        svg.append(svgNode("line", { x1: x, x2: x, y1: minY, y2: maxY, "stroke-width": isHighlighted ? 3.2 : 2.3, ...rangeAttributes }));
+        svg.append(svgNode("line", { x1: x - 6, x2: x + 6, y1: minY, y2: minY, "stroke-width": isHighlighted ? 3.3 : 2.4, ...rangeAttributes }));
+        svg.append(svgNode("line", { x1: x - 6, x2: x + 6, y1: maxY, y2: maxY, "stroke-width": isHighlighted ? 3.3 : 2.4, ...rangeAttributes }));
       }
       const markerRadius = metric.type === "range" ? (isHighlighted ? 4.9 : 4.1) : (isHighlighted ? 5.1 : 4.2);
-      const marker = svgNode("circle", { cx: x, cy: y, r: markerRadius, fill: style.color, stroke: "#fff", "stroke-width": isHighlighted ? 1.7 : 1.4, opacity });
+      const marker = svgNode("circle", {
+        cx: x,
+        cy: y,
+        r: markerRadius,
+        fill: isForecast ? "#fff" : style.color,
+        stroke: isForecast ? style.color : "#fff",
+        "stroke-width": isForecast ? (isHighlighted ? 3 : 2.4) : (isHighlighted ? 1.7 : 1.4),
+        opacity: isForecast ? 0.9 : opacity
+      });
       attachTooltip(marker, frame, tooltipText(location, row, metric));
       svg.append(marker);
     });
@@ -225,14 +293,15 @@ function renderTable(group, series, granularity) {
   const bucketHead = create("th", null, granularity === "day" ? "Date" : "Time bucket");
   bucketHead.rowSpan = 2;
   locationRow.append(bucketHead);
+  const columns = group.tableColumns.filter((column) => !column.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[column.key]))));
   series.forEach((location) => {
     const cell = create("th", null, location.label);
-    cell.colSpan = group.tableColumns.length;
+    cell.colSpan = columns.length;
     cell.scope = "colgroup";
     locationRow.append(cell);
   });
   const metricRow = create("tr");
-  series.forEach(() => group.tableColumns.forEach((column) => {
+  series.forEach(() => columns.forEach((column) => {
     const cell = create("th", null, column.label);
     cell.scope = "col";
     metricRow.append(cell);
@@ -242,13 +311,20 @@ function renderTable(group, series, granularity) {
   const body = create("tbody");
   const keys = collectBucketKeys(series);
   const rowsByLocation = series.map((location) => new Map(location.rows.map((row) => [row.key, row])));
+  let forecastStarted = false;
   for (const key of keys) {
     const rowNode = create("tr");
     const representative = rowsByLocation.map((map) => map.get(key)).find(Boolean);
     const bucket = create("th", null, representative?.label || key);
     bucket.scope = "row";
+    if (representative?.dataKind === "forecast") {
+      rowNode.className = `forecast-table-row ${forecastStarted ? "" : "is-first-forecast"}`.trim();
+      forecastStarted = true;
+      const badge = create("small", "forecast-row-badge", `Forecast · ${representative.forecastConfidence || "unknown"} confidence`);
+      bucket.append(badge);
+    }
     rowNode.append(bucket);
-    rowsByLocation.forEach((map) => group.tableColumns.forEach((column) => {
+    rowsByLocation.forEach((map) => columns.forEach((column) => {
       const value = map.get(key)?.[column.key];
       rowNode.append(create("td", null, column.formatter === "direction" ? formatDirection(value) : formatNumber(value, column.digits)));
     }));
@@ -276,8 +352,9 @@ function renderGroup(group, series, settings, onPopout) {
   } else if (settings.view === "table") {
     article.append(renderTable(group, series, settings.granularity));
   } else {
-    const grid = create("div", `chart-grid ${group.metrics.length === 1 ? "single" : ""}`);
-    group.metrics.forEach((metric) => grid.append(renderChartCard(metric, series, settings.highlightLocation, onPopout)));
+    const metrics = group.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
+    const grid = create("div", `chart-grid ${metrics.length === 1 ? "single" : ""}`);
+    metrics.forEach((metric) => grid.append(renderChartCard(metric, series, settings.highlightLocation, onPopout)));
     article.append(grid);
   }
   return article;

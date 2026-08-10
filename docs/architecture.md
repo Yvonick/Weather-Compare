@@ -28,6 +28,15 @@ The domain modules do not read DOM state. `app.js` is the only controller and ow
 - CSV shape is stable and independent of rendered tables.
 - API errors preserve successful sibling requests.
 - Location loads use bounded concurrency and retry transient `429`/server responses before surfacing a per-location failure.
+- Continuous ranges split at the local present-day boundary: completed days come from the archive API and today onward comes from the forecast API.
+- Forecast provenance is preserved through aggregation, charts, tables, tooltips, and CSV export.
+- Missing sum metrics remain missing instead of being converted to a misleading zero.
+
+## Forecast presentation
+
+The historical and forecast segments share the same date axis. A labeled vertical boundary and tinted future region make the transition explicit. Historical series use solid lines and filled markers; forecast series use dashed lines and hollow markers. Forecast table rows use the same tint.
+
+The confidence label is deliberately described as a lead-time guide, not a statistical probability: higher for days 0–2, medium for days 3–5, and lower for day 6 onward. This keeps the prototype honest until ensemble forecast distributions are introduced.
 
 ## Deliberate compatibility
 

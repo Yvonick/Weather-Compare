@@ -1,7 +1,7 @@
 import { fetchLocationData, suggestLocations } from "./api.js";
 import { settleWithConcurrency } from "./async.js";
 import { createChartPopout, renderDashboard } from "./charts.js";
-import { MAX_LOCATIONS, SERIES_STYLES } from "./config.js";
+import { CONTINUOUS_PRESET, MAX_LOCATIONS, SERIES_STYLES } from "./config.js";
 import { downloadCsv } from "./export.js";
 import {
   buildShareUrl,
@@ -30,6 +30,7 @@ const elements = {
   share: document.querySelector("#share-button"),
   errors: document.querySelector("#error-list"),
   status: document.querySelector("#status"),
+  timelineGuide: document.querySelector("#timeline-guide"),
   legend: document.querySelector("#series-legend"),
   dashboard: document.querySelector("#dashboard"),
   popout: document.querySelector("#chart-popout")
@@ -42,6 +43,7 @@ let failures = [];
 let loading = false;
 let suggestionTimer = null;
 let suggestionRequest = null;
+let activeLoadRequest = null;
 let locationSearch = {
   index: null,
   query: "",
@@ -157,6 +159,9 @@ function renderControls() {
   elements.granularity.value = settings.granularity;
   elements.view.value = settings.view;
   elements.load.disabled = loading;
+  const today = new Date();
+  const todayString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  elements.timelineGuide.hidden = !(settings.preset === CONTINUOUS_PRESET || settings.endDate > todayString || loadedData.some((location) => location.hasForecast));
   renderLocationControls();
   persist();
 }
@@ -190,6 +195,12 @@ function renderLegend(series) {
     const sources = document.createElement("small");
     sources.textContent = `Weather: ${location.weatherSource || "source grid"} · Air: ${location.airSource || "source grid"}`;
     content.append(name, query, sources);
+    if (location.dataNotices?.length) {
+      const notice = document.createElement("small");
+      notice.className = "data-notice";
+      notice.textContent = location.dataNotices.join(" · ");
+      content.append(notice);
+    }
     item.append(swatch, content);
     elements.legend.append(item);
   });
@@ -370,10 +381,20 @@ async function loadComparison() {
   const remappedHighlight = entries.findIndex((entry) => entry.originalIndex === highlightedOriginalIndex);
   settings.highlightLocation = remappedHighlight >= 0 ? remappedHighlight : null;
 
+  activeLoadRequest?.abort();
+  const request = new AbortController();
+  activeLoadRequest = request;
+  const requestSettings = {
+    ...settings,
+    locations: [...settings.locations],
+    hiddenLocations: [...settings.hiddenLocations]
+  };
   loading = true;
   renderControls();
   setStatus(`Loading ${entries.length} location${entries.length === 1 ? "" : "s"} for ${describeWindow(settings)}.`);
-  const results = await settleWithConcurrency(entries, (entry) => fetchLocationData(entry.value, settings), 4);
+  const results = await settleWithConcurrency(entries, (entry) => fetchLocationData(entry.value, requestSettings, request.signal), 4);
+  if (activeLoadRequest !== request) return;
+  activeLoadRequest = null;
   loadedData = [];
   failures = [];
   results.forEach((result, index) => {
@@ -516,6 +537,9 @@ elements.view.addEventListener("change", () => {
 });
 
 elements.reset.addEventListener("click", () => {
+  activeLoadRequest?.abort();
+  activeLoadRequest = null;
+  loading = false;
   settings = createDefaultSettings();
   loadedData = [];
   failures = [];
