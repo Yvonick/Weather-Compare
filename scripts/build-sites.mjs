@@ -47,7 +47,7 @@ export default {
     return new Response(request.method === "HEAD" ? null : asset.body, {
       headers: {
         "Content-Type": asset.contentType,
-        "Cache-Control": route === "/" ? "no-cache" : "public, max-age=3600",
+        "Cache-Control": "no-cache",
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "strict-origin-when-cross-origin"
       }
