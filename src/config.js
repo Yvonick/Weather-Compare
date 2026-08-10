@@ -16,11 +16,9 @@ const colors = [
   "#0f5db8", "#12715c", "#c05621", "#9b2c5f", "#58657a",
   "#6b46c1", "#00738f", "#8a6a0b", "#b4333c", "#2c7a7b"
 ];
-const dashPatterns = ["", "10 4", "4 4", "14 5 4 5", "18 5", "2 4", "12 3 3 3", "7 3", "16 6", "3 5"];
 
 export const SERIES_STYLES = Object.freeze(Array.from({ length: MAX_LOCATIONS }, (_, index) => ({
   color: colors[index % colors.length],
-  dash: index < colors.length ? dashPatterns[index] : `${3 + (index % 5) * 2} 3 2 3`,
   marker: index < colors.length ? "circle" : "diamond"
 })));
 

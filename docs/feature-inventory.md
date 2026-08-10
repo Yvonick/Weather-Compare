@@ -41,7 +41,7 @@ The graph view contains 13 charts. Temperature uses min-to-max whiskers with ave
 
 - The default range joins the previous seven complete days to today plus the next six forecast days.
 - A labeled vertical line marks the historical/forecast boundary and the future region has a light tint.
-- Each location keeps the same color and line pattern across the complete timeline; forecast markers are hollow and forecast lines have reduced opacity.
+- Each location keeps the same color and marker shape across the complete timeline; dashed lines are reserved for forecasts, whose markers are hollow and whose lines have reduced opacity.
 - Forecast table rows are tinted and carry a forecast badge.
 - Forecast tooltips and table badges show a lead-time confidence guide: higher at 0–2 days, medium at 3–5 days, and lower from day 6.
 - The interface explicitly says this guide is based on lead time and is not an ensemble-derived probability.

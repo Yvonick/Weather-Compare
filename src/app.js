@@ -184,9 +184,9 @@ function renderLegend(series) {
     const item = document.createElement("div");
     item.className = "legend-item";
     const swatch = document.createElement("span");
-    swatch.className = "legend-swatch";
+    swatch.className = `legend-swatch is-${style.marker}`;
+    swatch.style.color = style.color;
     swatch.style.borderTopColor = style.color;
-    swatch.style.borderTopStyle = style.dash ? "dashed" : "solid";
     const content = document.createElement("div");
     const name = document.createElement("strong");
     name.textContent = location.label;

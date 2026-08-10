@@ -21,11 +21,9 @@ const colors = [
   "#0f5db8", "#12715c", "#c05621", "#9b2c5f", "#58657a",
   "#6b46c1", "#00738f", "#8a6a0b", "#b4333c", "#2c7a7b"
 ];
-const dashPatterns = ["", "10 4", "4 4", "14 5 4 5", "18 5", "2 4", "12 3 3 3", "7 3", "16 6", "3 5"];
 
 const SERIES_STYLES = Object.freeze(Array.from({ length: MAX_LOCATIONS }, (_, index) => ({
   color: colors[index % colors.length],
-  dash: index < colors.length ? dashPatterns[index] : `${3 + (index % 5) * 2} 3 2 3`,
   marker: index < colors.length ? "circle" : "diamond"
 })));
 
@@ -867,6 +865,10 @@ function niceStep(range, targetTicks = 5) {
   return step * magnitude;
 }
 
+function lineDashForKind(dataKind) {
+  return dataKind === "forecast" ? "8 5" : "";
+}
+
 function chartScale(metric, series) {
   const values = [];
   for (const location of series) {
@@ -887,15 +889,17 @@ function chartScale(metric, series) {
     high += spread;
   }
   const valueRange = high - low;
-  const padding = valueRange * 0.08;
+  const padding = valueRange * 0.06;
   const rawMin = metric.floorZero ? Math.max(0, low - padding) : low - padding;
   const rawMax = high + padding;
   const step = niceStep(rawMax - rawMin);
-  const min = Math.floor(rawMin / step) * step;
-  const max = Math.ceil(rawMax / step) * step;
+  const min = rawMin;
+  const max = rawMax;
   const ticks = [];
-  for (let value = min, guard = 0; value <= max + step / 10 && guard < 12; value += step, guard += 1) ticks.push(Number(value.toPrecision(12)));
-  return { min, max, ticks };
+  const firstTick = Math.ceil((min - step / 1000) / step) * step;
+  for (let value = firstTick, guard = 0; value <= max + step / 1000 && guard < 12; value += step, guard += 1) ticks.push(Number(value.toPrecision(12)));
+  const tickDigits = Math.max(0, Math.min(3, -Math.floor(Math.log10(step))));
+  return { min, max, ticks, tickDigits };
 }
 
 function tooltipText(location, row, metric) {
@@ -958,8 +962,7 @@ function renderForecastRegion(svg, boundaryX, plotTop, plotRight, plotHeight) {
     y1: plotTop,
     y2: plotTop + plotHeight,
     stroke: "#226047",
-    "stroke-width": 2,
-    "stroke-dasharray": "4 4"
+    "stroke-width": 2
   }));
   const nowLabel = svgNode("text", { x: boundaryX + 8, y: plotTop + 15, class: "forecast-axis-label" });
   nowLabel.textContent = "NOW · FORECAST →";
@@ -1029,7 +1032,7 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
     const y = yFor(tick);
     svg.append(svgNode("line", { x1: margin.left, x2: width - margin.right, y1: y, y2: y, stroke: "#d7d7d7", "stroke-width": 1 }));
     const label = svgNode("text", { x: margin.left - 10, y: y + 4, "text-anchor": "end", class: "axis-label" });
-    label.textContent = formatNumber(tick, Math.abs(tick) < 10 && tick % 1 ? 1 : 0);
+    label.textContent = formatNumber(tick, scale.tickDigits);
     svg.append(label);
   }
   keys.forEach((key, index) => {
@@ -1067,8 +1070,8 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
     };
     const historicalPath = buildPath("historical");
     const forecastPath = buildPath("forecast");
-    if (historicalPath) svg.append(svgNode("path", { d: historicalPath, fill: "none", stroke: style.color, "stroke-width": lineWidth, "stroke-dasharray": style.dash, "stroke-linejoin": "round", "stroke-linecap": "round", opacity }));
-    if (forecastPath) svg.append(svgNode("path", { d: forecastPath, fill: "none", stroke: style.color, "stroke-width": lineWidth, "stroke-dasharray": style.dash, "stroke-linejoin": "round", "stroke-linecap": "round", opacity: opacity * 0.82 }));
+    if (historicalPath) svg.append(svgNode("path", { d: historicalPath, fill: "none", stroke: style.color, "stroke-width": lineWidth, "stroke-dasharray": lineDashForKind("historical"), "stroke-linejoin": "round", "stroke-linecap": "round", opacity }));
+    if (forecastPath) svg.append(svgNode("path", { d: forecastPath, fill: "none", stroke: style.color, "stroke-width": lineWidth, "stroke-dasharray": lineDashForKind("forecast"), "stroke-linejoin": "round", "stroke-linecap": "round", opacity: opacity * 0.82 }));
 
     keys.forEach((key, index) => {
       const row = rowByKey.get(key);
@@ -1080,21 +1083,28 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
       if (metric.type === "range" && Number.isFinite(row[metric.minKey]) && Number.isFinite(row[metric.maxKey])) {
         const minY = yFor(row[metric.minKey]);
         const maxY = yFor(row[metric.maxKey]);
-        const rangeAttributes = { stroke: style.color, opacity: isForecast ? opacity * 0.82 : opacity };
+        const rangeAttributes = { stroke: style.color, "stroke-dasharray": lineDashForKind(row.dataKind), opacity: isForecast ? opacity * 0.82 : opacity };
         svg.append(svgNode("line", { x1: x, x2: x, y1: minY, y2: maxY, "stroke-width": isHighlighted ? 3.2 : 2.3, ...rangeAttributes }));
         svg.append(svgNode("line", { x1: x - 6, x2: x + 6, y1: minY, y2: minY, "stroke-width": isHighlighted ? 3.3 : 2.4, ...rangeAttributes }));
         svg.append(svgNode("line", { x1: x - 6, x2: x + 6, y1: maxY, y2: maxY, "stroke-width": isHighlighted ? 3.3 : 2.4, ...rangeAttributes }));
       }
       const markerRadius = metric.type === "range" ? (isHighlighted ? 4.9 : 4.1) : (isHighlighted ? 5.1 : 4.2);
-      const marker = svgNode("circle", {
-        cx: x,
-        cy: y,
-        r: markerRadius,
+      const commonMarkerAttributes = {
         fill: isForecast ? "#fff" : style.color,
         stroke: isForecast ? style.color : "#fff",
         "stroke-width": isForecast ? (isHighlighted ? 3 : 2.4) : (isHighlighted ? 1.7 : 1.4),
         opacity: isForecast ? 0.9 : opacity
-      });
+      };
+      const marker = style.marker === "diamond"
+        ? svgNode("rect", {
+          x: x - markerRadius * 0.78,
+          y: y - markerRadius * 0.78,
+          width: markerRadius * 1.56,
+          height: markerRadius * 1.56,
+          transform: `rotate(45 ${x} ${y})`,
+          ...commonMarkerAttributes
+        })
+        : svgNode("circle", { cx: x, cy: y, r: markerRadius, ...commonMarkerAttributes });
       attachTooltip(marker, frame, tooltipText(location, row, metric));
       svg.append(marker);
     });
@@ -1442,9 +1452,9 @@ function renderLegend(series) {
     const item = document.createElement("div");
     item.className = "legend-item";
     const swatch = document.createElement("span");
-    swatch.className = "legend-swatch";
+    swatch.className = `legend-swatch is-${style.marker}`;
+    swatch.style.color = style.color;
     swatch.style.borderTopColor = style.color;
-    swatch.style.borderTopStyle = style.dash ? "dashed" : "solid";
     const content = document.createElement("div");
     const name = document.createElement("strong");
     name.textContent = location.label;

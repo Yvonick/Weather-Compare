@@ -95,11 +95,14 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--green
 .key-marker { display: inline-block; width: .75rem; height: .75rem; border-radius: 50%; border: 2px solid var(--green); }
 .historical-marker { background: var(--green); }
 .forecast-marker { background: #fff; }
-.key-now-line { display: inline-block; width: 1.2rem; border-top: 2px dashed var(--green); }
+.key-now-line { display: inline-block; width: 1.2rem; border-top: 2px solid var(--green); }
 
 .series-legend { display: grid; gap: .75rem; }
 .legend-item { display: grid; grid-template-columns: 2.2rem minmax(0, 1fr); gap: .65rem; align-items: start; }
-.legend-swatch { height: .8rem; margin-top: .35rem; border-top-width: 3px; border-top-style: solid; }
+.legend-swatch { position: relative; height: .8rem; margin-top: .35rem; border-top-width: 3px; border-top-style: solid; }
+.legend-swatch::after { position: absolute; top: -.34rem; left: .85rem; width: .48rem; height: .48rem; border: 1px solid #fff; background: currentColor; content: ""; }
+.legend-swatch.is-circle::after { border-radius: 50%; }
+.legend-swatch.is-diamond::after { transform: rotate(45deg); }
 .legend-item strong { display: block; font-size: .82rem; font-weight: 600; overflow-wrap: anywhere; }
 .legend-item small { display: block; color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; }
 .legend-item .data-notice { color: var(--danger); }

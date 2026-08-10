@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { chartScale } from "../src/charts.js";
+import { chartScale, lineDashForKind } from "../src/charts.js";
 
 const seriesWith = (key, values) => [{
   rows: values.map((value) => ({ [key]: value }))
@@ -17,6 +17,7 @@ test("non-negative metrics are framed around their observed values instead of ze
   assert.ok(scale.min < 42);
   assert.ok(scale.max > 47);
   assert.ok(!scale.ticks.includes(0));
+  assert.ok(scale.max - scale.min < 7);
 });
 
 test("a constant positive series receives a tight readable domain", () => {
@@ -38,4 +39,9 @@ test("zero remains available when it is part of the displayed dataset", () => {
   );
 
   assert.equal(scale.min, 0);
+});
+
+test("dash encoding is reserved exclusively for forecast data", () => {
+  assert.equal(lineDashForKind("historical"), "");
+  assert.equal(lineDashForKind("forecast"), "8 5");
 });

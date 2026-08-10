@@ -34,9 +34,9 @@ The domain modules do not read DOM state. `app.js` is the only controller and ow
 
 ## Forecast presentation
 
-The historical and forecast segments share the same date axis. A labeled vertical boundary and tinted future region make the transition explicit. Forecast series use hollow markers and reduced opacity while retaining their location's line pattern. Forecast table rows use the same tint.
+The historical and forecast segments share the same date axis. A labeled solid vertical boundary and tinted future region make the transition explicit. Forecast series use dashed lines, hollow markers, and reduced opacity. Forecast table rows use the same tint.
 
-Line color and dash pattern belong exclusively to location identity and remain unchanged across the present boundary. Forecast status is carried by the tinted future region, the labeled boundary, reduced opacity, and hollow markers. Chart domains are padded around the displayed values; zero is included only when it is part of the data range.
+Line color and marker shape belong exclusively to location identity. A dashed plotted line belongs exclusively to forecast status. Chart domains use exact symmetric padding around the displayed values with readable ticks inside that domain; zero is included only when it is part of the data range.
 
 The confidence label is deliberately described as a lead-time guide, not a statistical probability: higher for days 0–2, medium for days 3–5, and lower for day 6 onward. This keeps the prototype honest until ensemble forecast distributions are introduced.
 
