@@ -39,6 +39,30 @@ export function lineDashForKind(dataKind) {
   return dataKind === "forecast" ? "8 5" : "";
 }
 
+const TABLE_HEAT_STOPS = [
+  { position: 0, color: [255, 255, 255] },
+  { position: 0.2, color: [43, 131, 186] },
+  { position: 0.4, color: [254, 224, 139] },
+  { position: 0.6, color: [253, 174, 97] },
+  { position: 0.8, color: [215, 48, 39] },
+  { position: 1, color: [118, 42, 131] }
+];
+
+export function tableHeatStyle(value, domain) {
+  if (!Number.isFinite(value) || !domain || !Number.isFinite(domain.min) || !Number.isFinite(domain.max) || domain.min === domain.max) return null;
+  const position = Math.max(0, Math.min(1, (value - domain.min) / (domain.max - domain.min)));
+  const upperIndex = TABLE_HEAT_STOPS.findIndex((stop) => stop.position >= position);
+  const upper = TABLE_HEAT_STOPS[Math.max(1, upperIndex)];
+  const lower = TABLE_HEAT_STOPS[Math.max(0, upperIndex - 1)];
+  const segmentPosition = (position - lower.position) / (upper.position - lower.position);
+  const color = lower.color.map((channel, index) => Math.round(channel + (upper.color[index] - channel) * segmentPosition));
+  const brightness = (color[0] * 299 + color[1] * 587 + color[2] * 114) / 1000;
+  return {
+    backgroundColor: `rgb(${color.join(" ")})`,
+    textColor: brightness < 150 ? "#fff" : "#111"
+  };
+}
+
 export function chartScale(metric, series) {
   const values = [];
   for (const location of series) {
@@ -306,6 +330,19 @@ export function buildTableModel(group, series) {
   const metrics = group.tableColumns.filter((column) => !column.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[column.key]))));
   const keys = collectBucketKeys(series);
   const rowsByLocation = series.map((location) => new Map(location.rows.map((row) => [row.key, row])));
+  const heatDomains = {};
+  metrics.filter((metric) => metric.formatter !== "direction").forEach((metric) => {
+    const heatGroup = metric.heatGroup || metric.key;
+    const values = series.flatMap((location) => location.rows.map((row) => row[metric.key])).filter(Number.isFinite);
+    if (!values.length) return;
+    const current = heatDomains[heatGroup];
+    const metricMin = Math.min(...values);
+    const metricMax = Math.max(...values);
+    heatDomains[heatGroup] = {
+      min: current ? Math.min(current.min, metricMin) : metricMin,
+      max: current ? Math.max(current.max, metricMax) : metricMax
+    };
+  });
   const buckets = keys.map((key) => {
     const representative = rowsByLocation.map((map) => map.get(key)).find(Boolean);
     return {
@@ -320,16 +357,30 @@ export function buildTableModel(group, series) {
     locationIndex,
     metric,
     metricIndex,
+    heatDomain: heatDomains[metric.heatGroup || metric.key] || null,
     values: keys.map((key) => rowsByLocation[locationIndex].get(key)?.[metric.key])
   })));
-  return { buckets, metrics, rows };
+  return { buckets, heatDomains, metrics, rows };
 }
 
-function renderTable(group, series) {
+function renderTable(group, series, useGradient) {
+  const block = create("div", "table-block");
   const wrapper = create("div", "table-scroll");
   const table = create("table");
   const caption = create("caption", null, group.tableTitle);
   const model = buildTableModel(group, series);
+  if (useGradient) {
+    const legend = create("div", "table-heat-legend");
+    legend.setAttribute("role", "img");
+    legend.setAttribute("aria-label", "Relative color scale from very low values in white through blue, yellow, orange, and red to very high values in purple");
+    legend.append(
+      create("span", null, "Very low"),
+      create("i", "table-heat-ramp"),
+      create("span", null, "Very high"),
+      create("small", "table-heat-note", "Scaled within each indicator across the visible data; comparable temperature and wind rows share a scale.")
+    );
+    block.append(legend);
+  }
   const head = create("thead");
   const headingRow = create("tr");
   const locationHead = create("th", "table-location-heading", "Location");
@@ -369,13 +420,21 @@ function renderTable(group, series) {
       const classes = [];
       if (bucket.dataKind === "forecast") classes.push("forecast-table-column");
       if (bucketIndex === firstForecastIndex) classes.push("is-first-forecast-column");
-      rowNode.append(create("td", classes.join(" "), tableRow.metric.formatter === "direction" ? formatDirection(value) : formatNumber(value, tableRow.metric.digits)));
+      const cell = create("td", classes.join(" "), tableRow.metric.formatter === "direction" ? formatDirection(value) : formatNumber(value, tableRow.metric.digits));
+      const heatStyle = useGradient ? tableHeatStyle(value, tableRow.heatDomain) : null;
+      if (heatStyle) {
+        cell.classList.add("table-heat-cell");
+        cell.style.setProperty("--heat-color", heatStyle.backgroundColor);
+        cell.style.setProperty("--heat-text", heatStyle.textColor);
+      }
+      rowNode.append(cell);
     });
     body.append(rowNode);
   });
   table.append(caption, head, body);
   wrapper.append(table);
-  return wrapper;
+  block.append(wrapper);
+  return block;
 }
 
 function renderGroup(group, series, settings, onPopout) {
@@ -393,7 +452,7 @@ function renderGroup(group, series, settings, onPopout) {
   if (!series.length) {
     article.append(create("p", "empty-state", "Load at least one visible location to populate this panel."));
   } else if (settings.view === "table") {
-    article.append(renderTable(group, series));
+    article.append(renderTable(group, series, settings.tableGradient));
   } else {
     const metrics = group.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
     const grid = create("div", `chart-grid ${metrics.length === 1 ? "single" : ""}`);

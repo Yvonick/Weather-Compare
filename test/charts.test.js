@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildTableModel, chartScale, lineDashForKind } from "../src/charts.js";
+import { buildTableModel, chartScale, lineDashForKind, tableHeatStyle } from "../src/charts.js";
 
 const seriesWith = (key, values) => [{
   rows: values.map((value) => ({ [key]: value }))
@@ -64,4 +64,22 @@ test("table models put time buckets on columns and location indicators on rows",
   assert.deepEqual(model.rows.map((row) => row.metric.label), ["Tmin", "Tmax"]);
   assert.deepEqual(model.rows[0].values, [11, 12]);
   assert.equal(model.buckets[1].dataKind, "forecast");
+});
+
+test("table heat colors span the requested low-to-high palette with readable text", () => {
+  const domain = { min: -10, max: 40 };
+  assert.deepEqual(tableHeatStyle(-10, domain), { backgroundColor: "rgb(255 255 255)", textColor: "#111" });
+  assert.deepEqual(tableHeatStyle(40, domain), { backgroundColor: "rgb(118 42 131)", textColor: "#fff" });
+  assert.equal(tableHeatStyle(4, { min: 4, max: 4 }), null);
+});
+
+test("temperature table rows share one heat domain", () => {
+  const model = buildTableModel({
+    tableColumns: [
+      { key: "temperatureMin", label: "Tmin", heatGroup: "temperature" },
+      { key: "temperatureMax", label: "Tmax", heatGroup: "temperature" }
+    ]
+  }, [{ rows: [{ key: "a", temperatureMin: -5, temperatureMax: 28 }] }]);
+
+  assert.deepEqual(model.rows.map((row) => row.heatDomain), [{ min: -5, max: 28 }, { min: -5, max: 28 }]);
 });

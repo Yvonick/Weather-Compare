@@ -18,6 +18,7 @@ test("defaults open the continuous historical and forecast timeline", () => {
   assert.equal(settings.startDate, "2026-07-30");
   assert.equal(settings.endDate, "2026-08-12");
   assert.deepEqual(settings.locations, ["Fulda, Germany", "Zurich, Switzerland"]);
+  assert.equal(settings.tableGradient, false);
 });
 
 test("normalization limits locations and aligns hidden state", () => {
@@ -53,7 +54,8 @@ test("share URLs round-trip all compatibility parameters", () => {
     startDate: "2026-07-01",
     endDate: "2026-07-02",
     granularity: "12h",
-    view: "table"
+    view: "table",
+    tableGradient: true
   };
   const url = buildShareUrl(settings, "https://example.test/weathercompare/?old=1");
   assert.deepEqual(settingsFromUrl(url, now), settings);

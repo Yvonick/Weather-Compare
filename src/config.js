@@ -52,9 +52,9 @@ export const METRIC_GROUPS = Object.freeze([
     tableTitle: "Temperature summary",
     metrics: [{ id: "temperatureAvg", title: "Temperature range per bucket", unit: "°C", type: "range", minKey: "temperatureMin", maxKey: "temperatureMax", digits: 1 }],
     tableColumns: [
-      { key: "temperatureMin", label: "Tmin (°C)", digits: 1 },
-      { key: "temperatureAvg", label: "Tavg (°C)", digits: 1 },
-      { key: "temperatureMax", label: "Tmax (°C)", digits: 1 }
+      { key: "temperatureMin", label: "Tmin (°C)", digits: 1, heatGroup: "temperature" },
+      { key: "temperatureAvg", label: "Tavg (°C)", digits: 1, heatGroup: "temperature" },
+      { key: "temperatureMax", label: "Tmax (°C)", digits: 1, heatGroup: "temperature" }
     ]
   },
   {
@@ -86,8 +86,8 @@ export const METRIC_GROUPS = Object.freeze([
     ],
     tableColumns: [
       { key: "sunshineHours", label: "Sun (h)", digits: 2 },
-      { key: "uvAvg", label: "UV avg", digits: 2 },
-      { key: "uvMax", label: "UV max", digits: 2 }
+      { key: "uvAvg", label: "UV avg", digits: 2, heatGroup: "uv" },
+      { key: "uvMax", label: "UV max", digits: 2, heatGroup: "uv" }
     ]
   },
   {
@@ -101,8 +101,8 @@ export const METRIC_GROUPS = Object.freeze([
       { id: "windGustMax", title: "Peak gust", unit: "km/h", digits: 1, floorZero: true }
     ],
     tableColumns: [
-      { key: "windSpeedAvg", label: "Avg (km/h)", digits: 1 },
-      { key: "windGustMax", label: "Gust (km/h)", digits: 1 },
+      { key: "windSpeedAvg", label: "Avg (km/h)", digits: 1, heatGroup: "wind-speed" },
+      { key: "windGustMax", label: "Gust (km/h)", digits: 1, heatGroup: "wind-speed" },
       { key: "windDirection", label: "Direction", formatter: "direction" }
     ]
   },
@@ -121,8 +121,8 @@ export const METRIC_GROUPS = Object.freeze([
       { id: "so2Avg", title: "SO2 average", unit: "µg/m³", digits: 1, floorZero: true, bands: AIR_QUALITY_BANDS.so2Avg }
     ],
     tableColumns: [
-      { key: "aqiAvg", label: "AQI avg", digits: 1 },
-      { key: "aqiMax", label: "AQI max", digits: 1 },
+      { key: "aqiAvg", label: "AQI avg", digits: 1, heatGroup: "aqi" },
+      { key: "aqiMax", label: "AQI max", digits: 1, heatGroup: "aqi" },
       { key: "pm25Avg", label: "PM2.5", digits: 1 },
       { key: "pm10Avg", label: "PM10", digits: 1 },
       { key: "no2Avg", label: "NO2", digits: 1 },

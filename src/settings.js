@@ -27,7 +27,8 @@ export function createDefaultSettings(now = new Date()) {
     startDate: shiftDate(today, -7),
     endDate: shiftDate(today, 6),
     granularity: "day",
-    view: "graph"
+    view: "graph",
+    tableGradient: false
   };
 }
 
@@ -51,7 +52,8 @@ export function normalizeSettings(candidate = {}, now = new Date()) {
     startDate: isDateString(candidate.startDate) ? candidate.startDate : fallback.startDate,
     endDate: isDateString(candidate.endDate) ? candidate.endDate : fallback.endDate,
     granularity: ["day", "12h", "6h", "3h"].includes(candidate.granularity) ? candidate.granularity : fallback.granularity,
-    view: ["graph", "table"].includes(candidate.view) ? candidate.view : fallback.view
+    view: ["graph", "table"].includes(candidate.view) ? candidate.view : fallback.view,
+    tableGradient: candidate.tableGradient === true || candidate.tableGradient === 1 || candidate.tableGradient === "1" || candidate.tableGradient === "true"
   };
 }
 
@@ -92,7 +94,8 @@ export function settingsFromUrl(url, now = new Date()) {
     startDate: params.get("start"),
     endDate: params.get("end"),
     granularity: params.get("granularity"),
-    view: params.get("view")
+    view: params.get("view"),
+    tableGradient: params.get("gradient")
   }, now);
 }
 
@@ -110,6 +113,7 @@ export function buildShareUrl(settings, baseUrl) {
   url.searchParams.set("end", settings.endDate);
   url.searchParams.set("granularity", settings.granularity);
   url.searchParams.set("view", settings.view);
+  url.searchParams.set("gradient", settings.tableGradient ? "1" : "0");
   if (Number.isInteger(settings.highlightLocation)) url.searchParams.set("highlight", String(settings.highlightLocation));
   return url.toString();
 }

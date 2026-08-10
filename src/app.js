@@ -24,6 +24,8 @@ const elements = {
   end: document.querySelector("#end-date-input"),
   granularity: document.querySelector("#granularity-select"),
   view: document.querySelector("#view-select"),
+  tableGradient: document.querySelector("#table-gradient-input"),
+  tableGradientField: document.querySelector("#table-gradient-field"),
   load: document.querySelector("#load-button"),
   reset: document.querySelector("#reset-button"),
   export: document.querySelector("#export-button"),
@@ -158,6 +160,9 @@ function renderControls() {
   elements.end.value = settings.endDate;
   elements.granularity.value = settings.granularity;
   elements.view.value = settings.view;
+  elements.tableGradient.checked = settings.tableGradient;
+  elements.tableGradient.disabled = settings.view !== "table";
+  elements.tableGradientField.classList.toggle("is-disabled", settings.view !== "table");
   elements.load.disabled = loading;
   const today = new Date();
   const todayString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
@@ -532,6 +537,11 @@ elements.granularity.addEventListener("change", () => {
 });
 elements.view.addEventListener("change", () => {
   settings.view = elements.view.value;
+  renderControls();
+  renderData();
+});
+elements.tableGradient.addEventListener("change", () => {
+  settings.tableGradient = elements.tableGradient.checked;
   persist();
   renderData();
 });
