@@ -121,8 +121,8 @@ export const METRIC_GROUPS = Object.freeze([
       { id: "so2Avg", title: "SO2 average", unit: "µg/m³", digits: 1, floorZero: true, bands: AIR_QUALITY_BANDS.so2Avg }
     ],
     tableColumns: [
-      { key: "aqiAvg", label: "AQI avg", digits: 1, heatGroup: "aqi" },
-      { key: "aqiMax", label: "AQI max", digits: 1, heatGroup: "aqi" },
+      { key: "aqiAvg", label: "AQI avg", digits: 1 },
+      { key: "aqiMax", label: "AQI max", digits: 1 },
       { key: "pm25Avg", label: "PM2.5", digits: 1 },
       { key: "pm10Avg", label: "PM10", digits: 1 },
       { key: "no2Avg", label: "NO2", digits: 1 },

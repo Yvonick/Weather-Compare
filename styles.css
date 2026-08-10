@@ -154,6 +154,7 @@ thead .table-location-heading, thead .table-metric-heading { z-index: 3; }
 .forecast-column-badge { display: block; margin-top: .25rem; color: var(--green-dark); font-size: .58rem; font-weight: 600; text-transform: uppercase; }
 td.table-heat-cell { background: var(--heat-color); color: var(--heat-text); font-weight: 600; }
 td.table-heat-cell.forecast-table-column { background: linear-gradient(rgb(237 246 242 / .22), rgb(237 246 242 / .22)), var(--heat-color); }
+tbody tr.is-location-start > th, tbody tr.is-location-start > td { border-top: 4px solid var(--line-strong); }
 .source-list { display: grid; gap: .45rem; margin-bottom: 0; padding-left: 1.2rem; }
 
 .chart-popout { width: min(96vw, 1500px); max-width: none; height: min(92vh, 980px); border: 0; border-radius: var(--radius); padding: 0; background: #fff; }

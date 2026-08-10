@@ -56,7 +56,8 @@ The graph view contains 13 charts. Temperature uses min-to-max whiskers with ave
 - Missing values render as an em dash.
 - Dates are shown day-first across columns; sub-day column headings include the bucket start time.
 - Wind direction combines degrees with an eight-point compass label.
-- An optional persisted color scale shades numeric table cells from white through blue, yellow, orange, and red to purple. It is normalized within each indicator across visible data; directly comparable temperature, UV, wind-speed, and AQI rows share domains.
+- An optional persisted color scale shades numeric table cells from white through blue, yellow, orange, and red to purple. It is normalized within each indicator across visible data; only directly comparable temperature, UV, and wind-speed rows share domains. Every air-quality indicator has an independent domain.
+- A heavy horizontal rule separates each location's row group.
 
 ## Chart pop-out
 

@@ -406,6 +406,7 @@ function renderTable(group, series, useGradient) {
   const body = create("tbody");
   model.rows.forEach((tableRow) => {
     const rowNode = create("tr");
+    if (tableRow.metricIndex === 0 && tableRow.locationIndex > 0) rowNode.classList.add("is-location-start");
     if (tableRow.metricIndex === 0) {
       const locationCell = create("th", "table-location-heading", tableRow.location.label);
       locationCell.scope = "rowgroup";
