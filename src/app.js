@@ -7,7 +7,9 @@ import {
   buildShareUrl,
   createDefaultSettings,
   describeWindow,
+  formatDisplayDate,
   loadSettings,
+  parseDisplayDate,
   saveSettings,
   syncPresetDates,
   validateSettings
@@ -156,8 +158,8 @@ function renderLocationControls() {
 
 function renderControls() {
   elements.preset.value = settings.preset;
-  elements.start.value = settings.startDate;
-  elements.end.value = settings.endDate;
+  elements.start.value = formatDisplayDate(settings.startDate);
+  elements.end.value = formatDisplayDate(settings.endDate);
   elements.granularity.value = settings.granularity;
   elements.view.value = settings.view;
   elements.tableGradient.checked = settings.tableGradient;
@@ -198,8 +200,13 @@ function renderLegend(series) {
     const query = document.createElement("small");
     query.textContent = `Query: ${location.query} · ${Number(location.latitude).toFixed(3)}, ${Number(location.longitude).toFixed(3)} · ${location.timezone}`;
     const sources = document.createElement("small");
-    sources.textContent = `Weather: ${location.weatherSource || "source grid"} · Air: ${location.airSource || "source grid"}`;
-    content.append(name, query, sources);
+    sources.textContent = `Weather: Open-Meteo (${location.weatherSource || "source grid"}) · Air: Open-Meteo (${location.airSource || "source grid"})`;
+    const temperature = document.createElement("small");
+    const temperatureSource = location.temperatureSource;
+    temperature.textContent = temperatureSource
+      ? `Temperature ranges: ${temperatureSource.name} · ${temperatureSource.stationName || "station"}${Number.isFinite(temperatureSource.stationDistanceKm) ? ` (${temperatureSource.stationDistanceKm.toFixed(1)} km)` : ""} · ${temperatureSource.rangeMethod}`
+      : "Temperature ranges: Open-Meteo hourly grid fallback (a single hourly sample has no within-hour range)";
+    content.append(name, query, temperature, sources);
     if (location.dataNotices?.length) {
       const notice = document.createElement("small");
       notice.className = "data-notice";
@@ -521,12 +528,12 @@ elements.preset.addEventListener("change", () => {
   setStatus("Time window changed. Load comparison to refresh the data.");
 });
 elements.start.addEventListener("change", () => {
-  settings.startDate = elements.start.value;
+  settings.startDate = parseDisplayDate(elements.start.value) || elements.start.value.trim();
   settings.preset = "custom";
   renderControls();
 });
 elements.end.addEventListener("change", () => {
-  settings.endDate = elements.end.value;
+  settings.endDate = parseDisplayDate(elements.end.value) || elements.end.value.trim();
   settings.preset = "custom";
   renderControls();
 });

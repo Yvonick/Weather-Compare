@@ -1,6 +1,7 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
+import { handleTemperatureRequest } from "../server/temperature-api.js";
 
 const root = resolve(process.cwd());
 const port = Number(process.env.PORT || 4173);
@@ -12,8 +13,16 @@ const types = {
   ".svg": "image/svg+xml"
 };
 
-createServer((request, response) => {
-  const pathname = decodeURIComponent(new URL(request.url, `http://${request.headers.host}`).pathname);
+createServer(async (request, response) => {
+  const requestUrl = new URL(request.url, `http://${request.headers.host}`);
+  const pathname = decodeURIComponent(requestUrl.pathname);
+
+  if (pathname === "/api/temperature-range") {
+    const apiResponse = await handleTemperatureRequest(new Request(requestUrl, { method: request.method }), process.env);
+    response.writeHead(apiResponse.status, Object.fromEntries(apiResponse.headers));
+    response.end(Buffer.from(await apiResponse.arrayBuffer()));
+    return;
+  }
   const candidate = normalize(join(root, pathname === "/" ? "index.html" : pathname));
 
   if (!candidate.startsWith(root) || !existsSync(candidate) || !statSync(candidate).isFile()) {

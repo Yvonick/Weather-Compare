@@ -11,8 +11,11 @@ const ENDPOINTS = Object.freeze({
   forecast: "https://api.open-meteo.com/v1/forecast",
   geocode: "https://geocoding-api.open-meteo.com/v1/search",
   reverseGeocode: "https://geocoding-api.open-meteo.com/v1/reverse",
-  air: "https://air-quality-api.open-meteo.com/v1/air-quality"
+  air: "https://air-quality-api.open-meteo.com/v1/air-quality",
+  temperatureRange: "/api/temperature-range"
 });
+
+const NATIONAL_TEMPERATURE_COUNTRIES = Object.freeze(["AT", "CH", "DE", "DK", "FI", "FR", "GB", "NL", "NO"]);
 
 const PRESETS = Object.freeze({ "7d": 7, "15d": 15, "21d": 21 });
 const CONTINUOUS_PRESET = "7d7f";
@@ -52,7 +55,7 @@ const METRIC_GROUPS = Object.freeze([
     id: "temperature",
     eyebrow: "Temperature",
     title: "Min, average, and max",
-    description: "Each location gets a min-to-max segment with the average marked inside each bucket.",
+    description: "Station-based ranges use the best available sub-hourly samples or official interval extrema; uncovered buckets fall back to Open-Meteo.",
     chartTitle: "Temperature range per bucket",
     tableTitle: "Temperature summary",
     metrics: [{ id: "temperatureAvg", title: "Temperature range per bucket", unit: "°C", type: "range", minKey: "temperatureMin", maxKey: "temperatureMax", digits: 1 }],
@@ -153,7 +156,24 @@ function shiftDate(dateString, offsetDays) {
 }
 
 function isDateString(value) {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+function formatDisplayDate(value) {
+  if (!isDateString(value)) return value ?? "";
+  const [year, month, day] = value.split("-");
+  return `${day}/${month}/${year}`;
+}
+
+function parseDisplayDate(value) {
+  if (typeof value !== "string") return null;
+  const match = value.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return null;
+  const iso = `${match[3]}-${match[2]}-${match[1]}`;
+  return isDateString(iso) ? iso : null;
 }
 
 function createDefaultSettings(now = new Date()) {
@@ -190,7 +210,7 @@ function normalizeSettings(candidate = {}, now = new Date()) {
     preset: [...Object.keys(PRESETS), CONTINUOUS_PRESET, "custom"].includes(candidate.preset) ? candidate.preset : fallback.preset,
     startDate: isDateString(candidate.startDate) ? candidate.startDate : fallback.startDate,
     endDate: isDateString(candidate.endDate) ? candidate.endDate : fallback.endDate,
-    granularity: ["day", "12h", "6h", "3h"].includes(candidate.granularity) ? candidate.granularity : fallback.granularity,
+    granularity: ["day", "12h", "6h", "3h", "1h", "30m"].includes(candidate.granularity) ? candidate.granularity : fallback.granularity,
     view: ["graph", "table"].includes(candidate.view) ? candidate.view : fallback.view,
     tableGradient: candidate.tableGradient === true || candidate.tableGradient === 1 || candidate.tableGradient === "1" || candidate.tableGradient === "true"
   };
@@ -279,7 +299,7 @@ function saveSettings(settings, storage) {
 function describeWindow(settings) {
   if (settings.preset === CONTINUOUS_PRESET) return "the previous 7 days plus the next 7 forecast days";
   if (PRESETS[settings.preset]) return `past ${PRESETS[settings.preset]} days`;
-  return `${settings.startDate} to ${settings.endDate}`;
+  return `${formatDisplayDate(settings.startDate)} to ${formatDisplayDate(settings.endDate)}`;
 }
 
 
@@ -287,27 +307,35 @@ function describeWindow(settings) {
 function getBucketKey(timeString, granularity) {
   const [date, clock = "00:00"] = timeString.split("T");
   if (granularity === "day") return date;
-  const size = granularity === "12h" ? 12 : granularity === "6h" ? 6 : 3;
-  const hour = Number(clock.slice(0, 2));
-  return `${date}T${String(Math.floor(hour / size) * size).padStart(2, "0")}:00`;
+  const sizeMinutes = granularityMinutes(granularity);
+  const [hour = 0, minute = 0] = clock.split(":").map(Number);
+  const startMinutes = Math.floor((hour * 60 + minute) / sizeMinutes) * sizeMinutes;
+  return `${date}T${formatClock(startMinutes)}`;
 }
+
+const GRANULARITY_MINUTES = Object.freeze({ "30m": 30, "1h": 60, "3h": 180, "6h": 360, "12h": 720 });
+const granularityMinutes = (granularity) => GRANULARITY_MINUTES[granularity] || GRANULARITY_MINUTES["3h"];
+const formatClock = (minutes) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 
 function formatBucketLabel(key, granularity = "day") {
   const [date, time] = key.split("T");
   const [year, month, day] = date.split("-");
   const dateLabel = `${day}/${month}/${year}`;
   if (!time || granularity === "day") return dateLabel;
-  const startHour = Number(time.slice(0, 2));
-  const duration = granularity === "12h" ? 12 : granularity === "6h" ? 6 : 3;
-  const endHour = Math.min(23, startHour + duration - 1);
-  return `${dateLabel} ${String(startHour).padStart(2, "0")}:00-${String(endHour).padStart(2, "0")}:59`;
+  const [startHour = 0, startMinute = 0] = time.split(":").map(Number);
+  const startMinutes = startHour * 60 + startMinute;
+  const endMinutes = Math.min(1439, startMinutes + granularityMinutes(granularity) - 1);
+  return `${dateLabel} ${formatClock(startMinutes)}-${formatClock(endMinutes)}`;
 }
 
 function emptyBucket(key, granularity) {
   return {
     key,
     label: formatBucketLabel(key, granularity),
+    granularity,
     temperatureMin: Infinity, temperatureMax: -Infinity, temperatureSum: 0, temperatureCount: 0,
+    stationTemperatureMin: Infinity, stationTemperatureMax: -Infinity,
+    stationTemperatureSum: 0, stationTemperatureCount: 0, stationTemperatureExplicitRange: false,
     precipitationSum: 0, precipitationCount: 0,
     snowfallSum: 0, snowfallCount: 0,
     sunshineSeconds: 0, sunshineCount: 0,
@@ -389,6 +417,23 @@ function ingestAir(hourly = {}, ensureBucket) {
   });
 }
 
+function ingestTemperatureObservations(observations = [], ensureBucket) {
+  observations.forEach((observation) => {
+    if (!observation?.time) return;
+    const bucket = ensureBucket(observation.time);
+    const avg = Number.isFinite(observation.avg) ? observation.avg : null;
+    const min = Number.isFinite(observation.min) ? observation.min : avg;
+    const max = Number.isFinite(observation.max) ? observation.max : avg;
+    if (avg !== null) {
+      bucket.stationTemperatureSum += avg * Math.max(1, Number(observation.sampleCount) || 1);
+      bucket.stationTemperatureCount += Math.max(1, Number(observation.sampleCount) || 1);
+    }
+    if (min !== null) bucket.stationTemperatureMin = Math.min(bucket.stationTemperatureMin, min);
+    if (max !== null) bucket.stationTemperatureMax = Math.max(bucket.stationTemperatureMax, max);
+    bucket.stationTemperatureExplicitRange ||= Boolean(observation.explicitRange && min !== null && max !== null);
+  });
+}
+
 function average(bucket, prefix) {
   return bucket[`${prefix}Count`] ? bucket[`${prefix}Sum`] / bucket[`${prefix}Count`] : null;
 }
@@ -397,12 +442,28 @@ function finalize(bucket) {
   const direction = bucket.windDirectionCount
     ? (Math.atan2(bucket.windDirectionSin / bucket.windDirectionCount, bucket.windDirectionCos / bucket.windDirectionCount) * 180 / Math.PI + 360) % 360
     : null;
+  const usesStationTemperature = bucket.stationTemperatureCount > 0
+    || Number.isFinite(bucket.stationTemperatureMin)
+    || Number.isFinite(bucket.stationTemperatureMax);
+  const temperatureCount = usesStationTemperature ? bucket.stationTemperatureCount : bucket.temperatureCount;
+  const hasRange = usesStationTemperature
+    ? bucket.stationTemperatureExplicitRange || temperatureCount > 1
+    : temperatureCount > 1;
   return {
     key: bucket.key,
     label: bucket.label,
-    temperatureMin: bucket.temperatureCount ? bucket.temperatureMin : null,
-    temperatureAvg: average(bucket, "temperature"),
-    temperatureMax: bucket.temperatureCount ? bucket.temperatureMax : null,
+    temperatureMin: hasRange
+      ? (usesStationTemperature ? bucket.stationTemperatureMin : bucket.temperatureMin)
+      : null,
+    temperatureAvg: usesStationTemperature
+      ? (bucket.stationTemperatureCount ? bucket.stationTemperatureSum / bucket.stationTemperatureCount : null)
+      : average(bucket, "temperature"),
+    temperatureMax: hasRange
+      ? (usesStationTemperature ? bucket.stationTemperatureMax : bucket.temperatureMax)
+      : null,
+    temperatureSampleCount: temperatureCount,
+    temperatureRangeAvailable: hasRange,
+    temperatureSourceKind: usesStationTemperature ? "national-station" : "open-meteo",
     precipitationSum: bucket.precipitationCount ? bucket.precipitationSum : null,
     snowfallSum: bucket.snowfallCount ? bucket.snowfallSum : null,
     sunshineHours: bucket.sunshineCount ? bucket.sunshineSeconds / 3600 : null,
@@ -433,7 +494,7 @@ const daysBetween = (leftDate, rightDate) => Math.round(
   (Date.parse(`${leftDate}T00:00:00Z`) - Date.parse(`${rightDate}T00:00:00Z`)) / 86400000
 );
 
-function aggregateLocationData(resolved, weather, air, granularity, sourceLabels = {}, period = {}) {
+function aggregateLocationData(resolved, weather, air, granularity, sourceLabels = {}, period = {}, temperatureRange = {}) {
   const buckets = new Map();
   const ensureBucket = (time) => {
     const key = getBucketKey(time, granularity);
@@ -442,11 +503,13 @@ function aggregateLocationData(resolved, weather, air, granularity, sourceLabels
   };
   ingestWeather(weather.hourly, ensureBucket);
   ingestAir(air.hourly, ensureBucket);
+  ingestTemperatureObservations(temperatureRange.observations, ensureBucket);
   return {
     ...resolved,
     timezone: weather.timezone || air.timezone || resolved.timezone || "auto",
     weatherSource: sourceLabels.weather || null,
     airSource: sourceLabels.air || null,
+    temperatureSource: temperatureRange.source || null,
     rows: [...buckets.values()].sort((left, right) => left.key.localeCompare(right.key)).map(finalize).map((row) => {
       const dataKind = period.kind === "forecast" ? "forecast" : "historical";
       const forecastLeadDays = dataKind === "forecast" && period.forecastStartDate
@@ -586,7 +649,8 @@ async function geocodeLocation(query, signal) {
     label: buildLocationLabel(match),
     latitude: match.latitude,
     longitude: match.longitude,
-    timezone: match.timezone || "auto"
+    timezone: match.timezone || "auto",
+    countryCode: String(match.country_code || "").toUpperCase()
   };
 }
 
@@ -696,17 +760,37 @@ function airUrl(resolved, range) {
   return url;
 }
 
+function temperatureRangeUrl(resolved, range, granularity) {
+  const base = globalThis.location?.origin || "http://127.0.0.1";
+  const url = new URL(ENDPOINTS.temperatureRange, base);
+  url.searchParams.set("latitude", resolved.latitude);
+  url.searchParams.set("longitude", resolved.longitude);
+  url.searchParams.set("countryCode", resolved.countryCode);
+  url.searchParams.set("timezone", resolved.timezone);
+  url.searchParams.set("startDate", range.startDate);
+  url.searchParams.set("endDate", range.endDate);
+  url.searchParams.set("granularity", granularity);
+  return url;
+}
+
 async function fetchLocationData(query, settings, signal) {
   const resolved = await geocodeLocation(query, signal);
   const ranges = splitTimeline(settings);
   const segments = await Promise.all(ranges.map(async (range) => {
-    const [weatherResult, airResult] = await Promise.allSettled([
+    const useNationalTemperature = range.kind === "historical" && NATIONAL_TEMPERATURE_COUNTRIES.includes(resolved.countryCode);
+    const [weatherResult, airResult, temperatureResult] = await Promise.allSettled([
       fetchJson(weatherUrl(resolved, range), signal),
-      fetchJson(airUrl(resolved, range), signal)
+      fetchJson(airUrl(resolved, range), signal),
+      useNationalTemperature
+        ? fetchJson(temperatureRangeUrl(resolved, range, settings.granularity), signal)
+        : Promise.resolve({ source: null, observations: [], notices: [] })
     ]);
     if (weatherResult.status === "rejected") throw weatherResult.reason;
     const weather = weatherResult.value;
     const air = airResult.status === "fulfilled" ? airResult.value : { hourly: {} };
+    const temperatureRange = temperatureResult.status === "fulfilled"
+      ? temperatureResult.value
+      : { source: null, observations: [], notices: ["National temperature observations unavailable; using Open-Meteo fallback"] };
     const [weatherSource, airSource] = await Promise.all([
       reverseGeocodeSource(weather.latitude, weather.longitude, signal),
       airResult.status === "fulfilled"
@@ -719,11 +803,21 @@ async function fetchLocationData(query, settings, signal) {
       air,
       settings.granularity,
       { weather: weatherSource, air: airSource },
-      range
+      range,
+      temperatureRange
     );
+    const temperatureRows = data.rows.filter((row) => Number.isFinite(row.temperatureAvg));
+    const stationRows = temperatureRows.filter((row) => row.temperatureSourceKind === "national-station");
+    const coverageNotice = temperatureRange.source && stationRows.length < temperatureRows.length
+      ? `${temperatureRange.source.name} supplied station ranges for ${stationRows.length} of ${temperatureRows.length} temperature buckets; the remainder use Open-Meteo`
+      : null;
     return {
       data,
-      notices: airResult.status === "rejected" ? [`${range.kind} air-quality data unavailable`] : []
+      notices: [
+        ...(airResult.status === "rejected" ? [`${range.kind} air-quality data unavailable`] : []),
+        ...(temperatureRange.notices || []),
+        ...[coverageNotice].filter(Boolean)
+      ]
     };
   }));
 
@@ -735,7 +829,8 @@ async function fetchLocationData(query, settings, signal) {
     hasForecast: rows.some((row) => row.dataKind === "forecast"),
     weatherSource: segments.map((segment) => segment.data.weatherSource).find(Boolean) || null,
     airSource: segments.map((segment) => segment.data.airSource).find(Boolean) || null,
-    dataNotices: segments.flatMap((segment) => segment.notices)
+    temperatureSource: segments.map((segment) => segment.data.temperatureSource).find(Boolean) || null,
+    dataNotices: [...new Set(segments.flatMap((segment) => segment.notices))]
   };
 }
 
@@ -935,6 +1030,9 @@ function tooltipText(location, row, metric) {
     ? `Forecast · ${row.forecastConfidence || "unknown"} confidence (lead-time guide) · `
     : "Historical · ";
   if (metric.type === "range") {
+    if (!Number.isFinite(row[metric.minKey]) || !Number.isFinite(row[metric.maxKey])) {
+      return `${location.label} · ${row.label} · ${forecastContext}Sample ${formatNumber(row[metric.id], metric.digits)} ${metric.unit} · range unavailable`;
+    }
     return `${location.label} · ${row.label} · ${forecastContext}Min ${formatNumber(row[metric.minKey], metric.digits)} ${metric.unit} · Avg ${formatNumber(row[metric.id], metric.digits)} ${metric.unit} · Max ${formatNumber(row[metric.maxKey], metric.digits)} ${metric.unit}`;
   }
   return `${location.label} · ${row.label} · ${forecastContext}${formatNumber(row[metric.id], metric.digits)} ${metric.unit}`;
@@ -1012,6 +1110,45 @@ function renderThresholdLegend(metric) {
   return legend;
 }
 
+function chartTickParts(key) {
+  const [isoDate, time] = key.split("T");
+  const [year, month, day] = isoDate.split("-");
+  return { date: `${day}/${month}/${year}`, time: time?.slice(0, 5) || null };
+}
+
+function pointSpacingForKeys(keys) {
+  if (keys.length < 2 || !keys[0].includes("T") || !keys[1].includes("T")) return 86;
+  const intervalMinutes = Math.abs(Date.parse(keys[1]) - Date.parse(keys[0])) / 60000;
+  if (intervalMinutes <= 60) return 30;
+  if (intervalMinutes <= 180) return 54;
+  if (intervalMinutes <= 360) return 64;
+  return 86;
+}
+
+function tickStrideForKeys(keys) {
+  if (keys.length < 2 || !keys[0].includes("T") || !keys[1].includes("T")) return 1;
+  const intervalMinutes = Math.abs(Date.parse(keys[1]) - Date.parse(keys[0])) / 60000;
+  return intervalMinutes <= 60 ? 3 : 1;
+}
+
+function renderYAxis(scale, yFor, margin, height) {
+  const axis = svgNode("svg", {
+    class: "chart-y-axis",
+    viewBox: `0 0 ${margin.left + 1} ${height}`,
+    width: margin.left + 1,
+    height,
+    "aria-hidden": "true"
+  });
+  axis.append(svgNode("rect", { x: 0, y: 0, width: margin.left, height, fill: "#fff" }));
+  for (const tick of scale.ticks) {
+    const label = svgNode("text", { x: margin.left - 10, y: yFor(tick) + 4, "text-anchor": "end", class: "axis-label" });
+    label.textContent = formatNumber(tick, scale.tickDigits);
+    axis.append(label);
+  }
+  axis.append(svgNode("line", { x1: margin.left, x2: margin.left, y1: margin.top, y2: height - margin.bottom, stroke: "#d7d7d7" }));
+  return axis;
+}
+
 function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 } = {}) {
   container.replaceChildren();
   const frame = create("div", "chart-frame");
@@ -1028,15 +1165,16 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
     return frame;
   }
 
-  const baseWidth = Math.max(680, 110 + keys.length * 82);
+  const baseWidth = Math.max(680, 88 + keys.length * pointSpacingForKeys(keys));
   const width = Math.round(baseWidth * zoom);
-  const height = Math.round(300 * zoom);
-  const margin = { top: 20 * zoom, right: 26 * zoom, bottom: 74 * zoom, left: 62 * zoom };
+  const height = Math.round(310 * zoom);
+  const margin = { top: 20 * zoom, right: 26 * zoom, bottom: 64 * zoom, left: 62 * zoom };
   const plotWidth = width - margin.left - margin.right;
   const plotHeight = height - margin.top - margin.bottom;
   const scale = chartScale(metric, series);
   const yFor = (value) => margin.top + (scale.max - value) / (scale.max - scale.min) * plotHeight;
-  const xFor = (index) => margin.left + (keys.length === 1 ? plotWidth / 2 : index / (keys.length - 1) * plotWidth);
+  const edgeInset = Math.min(40 * zoom, plotWidth / 4);
+  const xFor = (index) => margin.left + (keys.length === 1 ? plotWidth / 2 : edgeInset + index / (keys.length - 1) * (plotWidth - edgeInset * 2));
   const allRows = series.flatMap((location) => location.rows);
   const rowForKey = new Map(keys.map((key) => [key, allRows.find((row) => row.key === key)]));
   const forecastIndex = keys.findIndex((key) => rowForKey.get(key)?.dataKind === "forecast");
@@ -1059,15 +1197,27 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
   for (const tick of scale.ticks) {
     const y = yFor(tick);
     svg.append(svgNode("line", { x1: margin.left, x2: width - margin.right, y1: y, y2: y, stroke: "#d7d7d7", "stroke-width": 1 }));
-    const label = svgNode("text", { x: margin.left - 10, y: y + 4, "text-anchor": "end", class: "axis-label" });
-    label.textContent = formatNumber(tick, scale.tickDigits);
-    svg.append(label);
   }
+  const tickStride = tickStrideForKeys(keys);
   keys.forEach((key, index) => {
-    const label = svgNode("text", { x: xFor(index), y: height - margin.bottom + 24, transform: `rotate(-35 ${xFor(index)} ${height - margin.bottom + 24})`, "text-anchor": "end", class: "axis-label" });
+    const parts = chartTickParts(key);
+    const isFirstBucketOfDay = index === 0 || key.slice(0, 10) !== keys[index - 1].slice(0, 10);
+    if (!isFirstBucketOfDay && index % tickStride !== 0) return;
+    const label = svgNode("text", { x: xFor(index), y: height - margin.bottom + 20, "text-anchor": "middle", class: "axis-label chart-x-label" });
     const row = rowForKey.get(key);
     if (row?.dataKind === "forecast") label.classList.add("forecast-date-label");
-    label.textContent = row?.label || key;
+    if (parts.time) {
+      const timeLine = svgNode("tspan", { x: xFor(index), dy: 0, class: "axis-time-label" });
+      timeLine.textContent = parts.time;
+      label.append(timeLine);
+      if (isFirstBucketOfDay) {
+        const dateLine = svgNode("tspan", { x: xFor(index), dy: 15, class: "axis-date-label" });
+        dateLine.textContent = parts.date;
+        label.append(dateLine);
+      }
+    } else {
+      label.textContent = parts.date;
+    }
     svg.append(label);
   });
 
@@ -1138,7 +1288,14 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
     });
   }
 
+  scroll.tabIndex = 0;
+  scroll.setAttribute("aria-label", `Scrollable ${metric.title} chart. The value axis remains visible while scrolling horizontally.`);
   scroll.append(svg);
+  const yAxis = renderYAxis(scale, yFor, margin, height);
+  frame.insertBefore(yAxis, tooltip);
+  scroll.addEventListener("scroll", () => {
+    yAxis.style.transform = `translateY(${-scroll.scrollTop}px)`;
+  }, { passive: true });
   return frame;
 }
 
@@ -1273,13 +1430,14 @@ function renderTable(group, series, useGradient) {
 }
 
 function renderGroup(group, series, settings, onPopout) {
+  const displayGroup = group;
   const article = create("article", "panel metric-panel");
   const intro = create("div", "panel-intro");
   const titleWrap = create("div");
-  titleWrap.append(create("p", "eyebrow", group.eyebrow), create("h2", null, group.title));
-  intro.append(titleWrap, create("p", "description", group.description));
+  titleWrap.append(create("p", "eyebrow", displayGroup.eyebrow), create("h2", null, displayGroup.title));
+  intro.append(titleWrap, create("p", "description", displayGroup.description));
   article.append(intro);
-  if (group.id === "air" && settings.view === "graph") {
+  if (displayGroup.id === "air" && settings.view === "graph") {
     const note = create("p", "method-note");
     note.innerHTML = 'Threshold guides follow the <a href="https://airindex.eea.europa.eu/AQI/index.html" target="_blank" rel="noreferrer">EEA European AQI methodology</a>.';
     article.append(note);
@@ -1287,9 +1445,9 @@ function renderGroup(group, series, settings, onPopout) {
   if (!series.length) {
     article.append(create("p", "empty-state", "Load at least one visible location to populate this panel."));
   } else if (settings.view === "table") {
-    article.append(renderTable(group, series, settings.tableGradient));
+    article.append(renderTable(displayGroup, series, settings.tableGradient));
   } else {
-    const metrics = group.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
+    const metrics = displayGroup.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
     const grid = create("div", `chart-grid ${metrics.length === 1 ? "single" : ""}`);
     metrics.forEach((metric) => grid.append(renderChartCard(metric, series, settings.highlightLocation, onPopout)));
     article.append(grid);
@@ -1513,8 +1671,8 @@ function renderLocationControls() {
 
 function renderControls() {
   elements.preset.value = settings.preset;
-  elements.start.value = settings.startDate;
-  elements.end.value = settings.endDate;
+  elements.start.value = formatDisplayDate(settings.startDate);
+  elements.end.value = formatDisplayDate(settings.endDate);
   elements.granularity.value = settings.granularity;
   elements.view.value = settings.view;
   elements.tableGradient.checked = settings.tableGradient;
@@ -1555,8 +1713,13 @@ function renderLegend(series) {
     const query = document.createElement("small");
     query.textContent = `Query: ${location.query} · ${Number(location.latitude).toFixed(3)}, ${Number(location.longitude).toFixed(3)} · ${location.timezone}`;
     const sources = document.createElement("small");
-    sources.textContent = `Weather: ${location.weatherSource || "source grid"} · Air: ${location.airSource || "source grid"}`;
-    content.append(name, query, sources);
+    sources.textContent = `Weather: Open-Meteo (${location.weatherSource || "source grid"}) · Air: Open-Meteo (${location.airSource || "source grid"})`;
+    const temperature = document.createElement("small");
+    const temperatureSource = location.temperatureSource;
+    temperature.textContent = temperatureSource
+      ? `Temperature ranges: ${temperatureSource.name} · ${temperatureSource.stationName || "station"}${Number.isFinite(temperatureSource.stationDistanceKm) ? ` (${temperatureSource.stationDistanceKm.toFixed(1)} km)` : ""} · ${temperatureSource.rangeMethod}`
+      : "Temperature ranges: Open-Meteo hourly grid fallback (a single hourly sample has no within-hour range)";
+    content.append(name, query, temperature, sources);
     if (location.dataNotices?.length) {
       const notice = document.createElement("small");
       notice.className = "data-notice";
@@ -1878,12 +2041,12 @@ elements.preset.addEventListener("change", () => {
   setStatus("Time window changed. Load comparison to refresh the data.");
 });
 elements.start.addEventListener("change", () => {
-  settings.startDate = elements.start.value;
+  settings.startDate = parseDisplayDate(elements.start.value) || elements.start.value.trim();
   settings.preset = "custom";
   renderControls();
 });
 elements.end.addEventListener("change", () => {
-  settings.endDate = elements.end.value;
+  settings.endDate = parseDisplayDate(elements.end.value) || elements.end.value.trim();
   settings.preset = "custom";
   renderControls();
 });

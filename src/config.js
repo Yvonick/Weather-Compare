@@ -6,8 +6,11 @@ export const ENDPOINTS = Object.freeze({
   forecast: "https://api.open-meteo.com/v1/forecast",
   geocode: "https://geocoding-api.open-meteo.com/v1/search",
   reverseGeocode: "https://geocoding-api.open-meteo.com/v1/reverse",
-  air: "https://air-quality-api.open-meteo.com/v1/air-quality"
+  air: "https://air-quality-api.open-meteo.com/v1/air-quality",
+  temperatureRange: "/api/temperature-range"
 });
+
+export const NATIONAL_TEMPERATURE_COUNTRIES = Object.freeze(["AT", "CH", "DE", "DK", "FI", "FR", "GB", "NL", "NO"]);
 
 export const PRESETS = Object.freeze({ "7d": 7, "15d": 15, "21d": 21 });
 export const CONTINUOUS_PRESET = "7d7f";
@@ -47,7 +50,7 @@ export const METRIC_GROUPS = Object.freeze([
     id: "temperature",
     eyebrow: "Temperature",
     title: "Min, average, and max",
-    description: "Each location gets a min-to-max segment with the average marked inside each bucket.",
+    description: "Station-based ranges use the best available sub-hourly samples or official interval extrema; uncovered buckets fall back to Open-Meteo.",
     chartTitle: "Temperature range per bucket",
     tableTitle: "Temperature summary",
     metrics: [{ id: "temperatureAvg", title: "Temperature range per bucket", unit: "°C", type: "range", minKey: "temperatureMin", maxKey: "temperatureMax", digits: 1 }],

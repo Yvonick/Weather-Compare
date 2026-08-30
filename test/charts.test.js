@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildTableModel, chartScale, lineDashForKind, tableHeatStyle } from "../src/charts.js";
+import { buildTableModel, chartScale, chartTickParts, lineDashForKind, tableHeatStyle } from "../src/charts.js";
 
 const seriesWith = (key, values) => [{
   rows: values.map((value) => ({ [key]: value }))
@@ -44,6 +44,11 @@ test("zero remains available when it is part of the displayed dataset", () => {
 test("dash encoding is reserved exclusively for forecast data", () => {
   assert.equal(lineDashForKind("historical"), "");
   assert.equal(lineDashForKind("forecast"), "8 5");
+});
+
+test("chart ticks separate compact hours from dd/mm/yyyy dates", () => {
+  assert.deepEqual(chartTickParts("2026-08-06T13:00"), { date: "06/08/2026", time: "13:00" });
+  assert.deepEqual(chartTickParts("2026-08-06"), { date: "06/08/2026", time: null });
 });
 
 test("table models put time buckets on columns and location indicators on rows", () => {

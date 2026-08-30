@@ -1,5 +1,5 @@
 import { aggregateLocationData } from "./aggregate.js";
-import { ENDPOINTS } from "./config.js";
+import { ENDPOINTS, NATIONAL_TEMPERATURE_COUNTRIES } from "./config.js";
 
 const normalize = (value) => String(value ?? "")
   .normalize("NFD")
@@ -119,7 +119,8 @@ export async function geocodeLocation(query, signal) {
     label: buildLocationLabel(match),
     latitude: match.latitude,
     longitude: match.longitude,
-    timezone: match.timezone || "auto"
+    timezone: match.timezone || "auto",
+    countryCode: String(match.country_code || "").toUpperCase()
   };
 }
 
@@ -229,17 +230,37 @@ function airUrl(resolved, range) {
   return url;
 }
 
+function temperatureRangeUrl(resolved, range, granularity) {
+  const base = globalThis.location?.origin || "http://127.0.0.1";
+  const url = new URL(ENDPOINTS.temperatureRange, base);
+  url.searchParams.set("latitude", resolved.latitude);
+  url.searchParams.set("longitude", resolved.longitude);
+  url.searchParams.set("countryCode", resolved.countryCode);
+  url.searchParams.set("timezone", resolved.timezone);
+  url.searchParams.set("startDate", range.startDate);
+  url.searchParams.set("endDate", range.endDate);
+  url.searchParams.set("granularity", granularity);
+  return url;
+}
+
 export async function fetchLocationData(query, settings, signal) {
   const resolved = await geocodeLocation(query, signal);
   const ranges = splitTimeline(settings);
   const segments = await Promise.all(ranges.map(async (range) => {
-    const [weatherResult, airResult] = await Promise.allSettled([
+    const useNationalTemperature = range.kind === "historical" && NATIONAL_TEMPERATURE_COUNTRIES.includes(resolved.countryCode);
+    const [weatherResult, airResult, temperatureResult] = await Promise.allSettled([
       fetchJson(weatherUrl(resolved, range), signal),
-      fetchJson(airUrl(resolved, range), signal)
+      fetchJson(airUrl(resolved, range), signal),
+      useNationalTemperature
+        ? fetchJson(temperatureRangeUrl(resolved, range, settings.granularity), signal)
+        : Promise.resolve({ source: null, observations: [], notices: [] })
     ]);
     if (weatherResult.status === "rejected") throw weatherResult.reason;
     const weather = weatherResult.value;
     const air = airResult.status === "fulfilled" ? airResult.value : { hourly: {} };
+    const temperatureRange = temperatureResult.status === "fulfilled"
+      ? temperatureResult.value
+      : { source: null, observations: [], notices: ["National temperature observations unavailable; using Open-Meteo fallback"] };
     const [weatherSource, airSource] = await Promise.all([
       reverseGeocodeSource(weather.latitude, weather.longitude, signal),
       airResult.status === "fulfilled"
@@ -252,11 +273,21 @@ export async function fetchLocationData(query, settings, signal) {
       air,
       settings.granularity,
       { weather: weatherSource, air: airSource },
-      range
+      range,
+      temperatureRange
     );
+    const temperatureRows = data.rows.filter((row) => Number.isFinite(row.temperatureAvg));
+    const stationRows = temperatureRows.filter((row) => row.temperatureSourceKind === "national-station");
+    const coverageNotice = temperatureRange.source && stationRows.length < temperatureRows.length
+      ? `${temperatureRange.source.name} supplied station ranges for ${stationRows.length} of ${temperatureRows.length} temperature buckets; the remainder use Open-Meteo`
+      : null;
     return {
       data,
-      notices: airResult.status === "rejected" ? [`${range.kind} air-quality data unavailable`] : []
+      notices: [
+        ...(airResult.status === "rejected" ? [`${range.kind} air-quality data unavailable`] : []),
+        ...(temperatureRange.notices || []),
+        ...[coverageNotice].filter(Boolean)
+      ]
     };
   }));
 
@@ -268,6 +299,7 @@ export async function fetchLocationData(query, settings, signal) {
     hasForecast: rows.some((row) => row.dataKind === "forecast"),
     weatherSource: segments.map((segment) => segment.data.weatherSource).find(Boolean) || null,
     airSource: segments.map((segment) => segment.data.airSource).find(Boolean) || null,
-    dataNotices: segments.flatMap((segment) => segment.notices)
+    temperatureSource: segments.map((segment) => segment.data.temperatureSource).find(Boolean) || null,
+    dataNotices: [...new Set(segments.flatMap((segment) => segment.notices))]
   };
 }

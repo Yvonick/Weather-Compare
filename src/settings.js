@@ -14,7 +14,24 @@ export function shiftDate(dateString, offsetDays) {
 }
 
 export function isDateString(value) {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+export function formatDisplayDate(value) {
+  if (!isDateString(value)) return value ?? "";
+  const [year, month, day] = value.split("-");
+  return `${day}/${month}/${year}`;
+}
+
+export function parseDisplayDate(value) {
+  if (typeof value !== "string") return null;
+  const match = value.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return null;
+  const iso = `${match[3]}-${match[2]}-${match[1]}`;
+  return isDateString(iso) ? iso : null;
 }
 
 export function createDefaultSettings(now = new Date()) {
@@ -51,7 +68,7 @@ export function normalizeSettings(candidate = {}, now = new Date()) {
     preset: [...Object.keys(PRESETS), CONTINUOUS_PRESET, "custom"].includes(candidate.preset) ? candidate.preset : fallback.preset,
     startDate: isDateString(candidate.startDate) ? candidate.startDate : fallback.startDate,
     endDate: isDateString(candidate.endDate) ? candidate.endDate : fallback.endDate,
-    granularity: ["day", "12h", "6h", "3h"].includes(candidate.granularity) ? candidate.granularity : fallback.granularity,
+    granularity: ["day", "12h", "6h", "3h", "1h", "30m"].includes(candidate.granularity) ? candidate.granularity : fallback.granularity,
     view: ["graph", "table"].includes(candidate.view) ? candidate.view : fallback.view,
     tableGradient: candidate.tableGradient === true || candidate.tableGradient === 1 || candidate.tableGradient === "1" || candidate.tableGradient === "true"
   };
@@ -140,5 +157,5 @@ export function saveSettings(settings, storage) {
 export function describeWindow(settings) {
   if (settings.preset === CONTINUOUS_PRESET) return "the previous 7 days plus the next 7 forecast days";
   if (PRESETS[settings.preset]) return `past ${PRESETS[settings.preset]} days`;
-  return `${settings.startDate} to ${settings.endDate}`;
+  return `${formatDisplayDate(settings.startDate)} to ${formatDisplayDate(settings.endDate)}`;
 }
