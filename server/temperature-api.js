@@ -107,6 +107,9 @@ const utcWindow = (request) => ({
   end: new Date(Date.parse(`${request.endDate}T23:59:59Z`) + 14 * 3600000)
 });
 const isoSeconds = (value) => value.toISOString().replace(".000Z", "Z");
+const SIX_MINUTES_MS = 6 * 60 * 1000;
+const floorSixMinutes = (value) => new Date(Math.floor(value.getTime() / SIX_MINUTES_MS) * SIX_MINUTES_MS);
+const ceilSixMinutes = (value) => new Date(Math.ceil(value.getTime() / SIX_MINUTES_MS) * SIX_MINUTES_MS);
 
 function sampledObservation(instant, value, request) {
   const avg = finite(value);
@@ -438,8 +441,8 @@ async function provideFrance(request, env) {
   const url = new URL("https://public-api.meteofrance.fr/public/DPClim/v1/commande-station/infrahoraire-6m");
   url.searchParams.set("id-station", station.id);
   const { start, end } = utcWindow(request);
-  url.searchParams.set("date-deb-periode", isoSeconds(start));
-  url.searchParams.set("date-fin-periode", isoSeconds(end));
+  url.searchParams.set("date-deb-periode", isoSeconds(floorSixMinutes(start)));
+  url.searchParams.set("date-fin-periode", isoSeconds(ceilSixMinutes(end)));
   const order = await checkedFetch(url, { headers });
   const orderPayload = await order.json();
   const orderId = orderPayload.elaboreProduitAvecDemandeResponse?.return ?? orderPayload.return ?? orderPayload.id;
