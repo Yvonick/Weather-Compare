@@ -8,7 +8,7 @@ A dependency-free web application for comparing historical and forecast weather 
 npm.cmd start
 ```
 
-Then open `http://localhost:4173`.
+Then open the local URL printed by the server. It starts at `http://localhost:4173`; if an older preview is already using that port, it automatically selects the next available preview port. The browser can discover the active local temperature service across these nearby ports, so national ranges do not silently disappear behind a stale static preview.
 
 You can also open `index.html` directly, but the local server is required for national station ranges. The committed `app.bundle.js` is a classic browser bundle so the core controls still work in previews that do not support ES modules.
 

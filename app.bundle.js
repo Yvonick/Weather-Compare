@@ -552,19 +552,55 @@ function buildLocationLabel(result) {
   return parts.filter(Boolean).join(", ");
 }
 
+const FEATURE_IMPORTANCE = Object.freeze({
+  PPLC: 170,
+  PPLA: 110,
+  PPLA2: 35,
+  PPLA3: 55,
+  PPLA4: 35,
+  PPL: 22,
+  PPLG: 18,
+  PPLL: -35,
+  PPLX: -20,
+  AIRP: -15
+});
+
 function candidateScore(result, parsed) {
   const label = normalize(buildLocationLabel(result));
   const name = normalize(result.name);
   const primary = normalize(parsed.primary);
   const raw = normalize(parsed.raw);
-  let score = name === primary ? 120 : name.includes(primary) ? 75 : 0;
-  if (label === raw) score += 240;
-  else if (raw && label.includes(raw)) score += 140;
+  const featureCode = String(result.feature_code || "").toUpperCase();
+  const country = normalize(result.country);
+  const countryCode = normalize(result.country_code);
+  const countryHint = normalize(parsed.parts.at(-1));
+  const population = Number(result.population);
+
+  let score = name === primary ? 220 : name.startsWith(primary) ? 180 : name.includes(primary) ? 145 : 0;
+  if (label === raw) score += 150;
+  else if (raw && label.startsWith(raw)) score += 90;
+  else if (raw && label.includes(raw)) score += 70;
   parsed.parts.map(normalize).forEach((part, index) => {
-    if (part && label.includes(part)) score += index ? 44 : 28;
+    if (!part) return;
+    const matchesCountry = index > 0 && (part === country || part === countryCode);
+    if (matchesCountry) score += 125;
+    else if (label.includes(part)) score += index ? 65 : 35;
   });
-  if (Number.isFinite(result.population)) score += Math.min(18, Math.log10(result.population + 1) * 3);
+  if (parsed.parts.length > 1 && countryHint && (countryHint === country || countryHint === countryCode)) score += 55;
+  score += FEATURE_IMPORTANCE[featureCode] || 0;
+  score += Number.isFinite(population) && population > 0
+    ? Math.min(155, Math.log10(population + 1) * 22)
+    : -12;
   return score;
+}
+
+function rankLocationCandidates(results, query) {
+  const parsed = queryParts(query);
+  return [...results].sort((left, right) => {
+    const scoreDifference = candidateScore(right, parsed) - candidateScore(left, parsed);
+    if (scoreDifference) return scoreDifference;
+    return buildLocationLabel(left).localeCompare(buildLocationLabel(right));
+  });
 }
 
 const wait = (milliseconds, signal) => new Promise((resolve, reject) => {
@@ -632,7 +668,7 @@ async function geocodeCandidates(query, count = 12, signal) {
     }
   }));
 
-  return [...candidateMap.values()].sort((left, right) => candidateScore(right, parsed) - candidateScore(left, parsed));
+  return rankLocationCandidates(candidateMap.values(), parsed.raw);
 }
 
 async function suggestLocations(query, signal) {
@@ -773,6 +809,34 @@ function temperatureRangeUrl(resolved, range, granularity) {
   return url;
 }
 
+function localTemperatureApiFallbackUrls(primaryUrl, origin = globalThis.location?.origin) {
+  if (!origin) return [];
+  const localOrigin = new URL(origin);
+  if (!/^(localhost|127\.0\.0\.1)$/.test(localOrigin.hostname)) return [];
+  return [4173, 4174, 4175, 4176, 4177]
+    .filter((port) => String(port) !== localOrigin.port)
+    .map((port) => {
+      const alternate = new URL(primaryUrl.pathname + primaryUrl.search, `${localOrigin.protocol}//${localOrigin.hostname}:${port}`);
+      return alternate;
+    });
+}
+
+async function fetchTemperatureRange(url, signal) {
+  try {
+    return await fetchJson(url, signal);
+  } catch (primaryError) {
+    if (primaryError?.name === "AbortError") throw primaryError;
+    for (const alternateUrl of localTemperatureApiFallbackUrls(url)) {
+      try {
+        return await fetchJson(alternateUrl, signal);
+      } catch (alternateError) {
+        if (alternateError?.name === "AbortError") throw alternateError;
+      }
+    }
+    throw primaryError;
+  }
+}
+
 async function fetchLocationData(query, settings, signal) {
   const resolved = await geocodeLocation(query, signal);
   const ranges = splitTimeline(settings);
@@ -782,7 +846,7 @@ async function fetchLocationData(query, settings, signal) {
       fetchJson(weatherUrl(resolved, range), signal),
       fetchJson(airUrl(resolved, range), signal),
       useNationalTemperature
-        ? fetchJson(temperatureRangeUrl(resolved, range, settings.granularity), signal)
+        ? fetchTemperatureRange(temperatureRangeUrl(resolved, range, settings.granularity), signal)
         : Promise.resolve({ source: null, observations: [], notices: [] })
     ]);
     if (weatherResult.status === "rejected") throw weatherResult.reason;
