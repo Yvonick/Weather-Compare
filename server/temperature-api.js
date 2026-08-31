@@ -439,22 +439,32 @@ async function provideFrance(request, env) {
   if (!department) return { observations: [], notice: "No French administrative department was found for this location" };
   const station = nearestStation(await franceStations(headers, department), request);
   if (!station) return { observations: [], notice: "No Météo-France station was found within 75 km" };
-  const url = new URL("https://public-api.meteofrance.fr/public/DPClim/v1/commande-station/horaire");
-  url.searchParams.set("id-station", station.id);
   const { start, end } = utcWindow(request);
-  url.searchParams.set("date-deb-periode", isoSeconds(floorHour(start)));
-  url.searchParams.set("date-fin-periode", isoSeconds(ceilHour(end)));
-  const order = await checkedFetch(url, { headers });
-  const orderPayload = await order.json();
-  const orderId = orderPayload.elaboreProduitAvecDemandeResponse?.return ?? orderPayload.return ?? orderPayload.id;
-  if (!orderId) throw new Error("Météo-France did not return an order id");
+  const startTime = isoSeconds(floorHour(start));
+  const endTime = isoSeconds(ceilHour(end));
+  const orderId = await cached(`france-hourly-order-${station.id}-${startTime}-${endTime}`, async () => {
+    const url = new URL("https://public-api.meteofrance.fr/public/DPClim/v1/commande-station/horaire");
+    url.searchParams.set("id-station", station.id);
+    url.searchParams.set("date-deb-periode", startTime);
+    url.searchParams.set("date-fin-periode", endTime);
+    const order = await checkedFetch(url, { headers });
+    const orderPayload = await order.json();
+    const id = orderPayload.elaboreProduitAvecDemandeResponse?.return ?? orderPayload.return ?? orderPayload.id;
+    if (!id) throw new Error("Météo-France did not return an order id");
+    return id;
+  }, 300000);
   let text = "";
+  let lastStatus = null;
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const response = await fetch(`https://public-api.meteofrance.fr/public/DPClim/v1/commande/fichier?id-cmde=${encodeURIComponent(orderId)}`, { headers });
-    if (response.ok && response.status !== 204) { text = await response.text(); break; }
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    lastStatus = response.status;
+    if (response.ok && response.status !== 204) {
+      text = await response.text();
+      if (text.trim()) break;
+    }
+    if (attempt < 7) await new Promise((resolve) => setTimeout(resolve, 1500));
   }
-  if (!text) return { observations: [], notice: "Météo-France archive order was not ready; using Open-Meteo fallback" };
+  if (!text) return { observations: [], notice: `Météo-France archive order was not ready (last response ${lastStatus ?? "unknown"}); using Open-Meteo fallback` };
   const observations = parseDelimited(text).map((row) => {
     const rawTime = column(row, ["AAAAMMJJHH", "AAAAMMJJHHMN", "date", "validite", "timestamp"]);
     const compact = String(rawTime || "").replace(/\.0$/, "").match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})?(\d{2})?$/);
