@@ -34,7 +34,10 @@ test("Météo-France uses official hourly extrema from the resolved department",
       return Response.json([{ codeDepartement: "35" }]);
     }
     if (url.includes("/DPClim/v1/liste-stations/horaire")) {
-      return Response.json([{ id: 35281001, nom: "RENNES-ST JACQUES", lat: 48.0688, lon: -1.734 }]);
+      return Response.json([
+        { id: 35238001, nom: "RENNES-CENTRE (CLOSED)", lat: 48.1174, lon: -1.6777, dateDebut: "1950-01-01 00:00:00", dateFin: "2020-12-31 23:00:00", posteOuvert: false },
+        { id: 35281001, nom: "RENNES-ST JACQUES", lat: 48.0688, lon: -1.734, dateDebut: "1945-01-01 00:00:00", dateFin: "", posteOuvert: true }
+      ]);
     }
     if (url.includes("/DPClim/v1/commande-station/horaire")) {
       return Response.json({ elaboreProduitAvecDemandeResponse: { return: "order-1" } }, { status: 202 });
@@ -65,6 +68,7 @@ test("Météo-France uses official hourly extrema from the resolved department",
     assert.ok(urls.some((url) => url.includes("id-departement=35")));
     assert.ok(urls.some((url) => url.includes("parametre=temperature")));
     const orderUrl = new URL(urls.find((url) => url.includes("/commande-station/horaire")));
+    assert.equal(orderUrl.searchParams.get("id-station"), "35281001");
     assert.equal(orderUrl.searchParams.get("date-deb-periode"), "2026-08-29T10:00:00Z");
     assert.equal(orderUrl.searchParams.get("date-fin-periode"), "2026-08-31T14:00:00Z");
     assert.equal(urls.filter((url) => url.includes("/commande-station/horaire")).length, 1);
