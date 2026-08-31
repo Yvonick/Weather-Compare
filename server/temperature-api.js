@@ -394,14 +394,29 @@ async function franceAuthHeaders(env) {
   return apiKey ? { Authorization: `Bearer ${apiKey}` } : null;
 }
 
-async function franceStations(headers) {
-  return cached("france-stations", async () => {
-    const text = await asText("https://public-api.meteofrance.fr/public/DPObs/liste-stations", { headers });
-    return parseDelimited(text).map((row) => ({
-      id: column(row, ["id_station", "idstation", "numer_sta", "id"]),
-      name: column(row, ["nom_usuel", "nom", "name"]) || "Météo-France station",
-      latitude: finite(column(row, ["lat", "latitude"])),
-      longitude: finite(column(row, ["lon", "longitude"]))
+async function franceDepartment(request) {
+  const key = `france-department-${request.latitude.toFixed(4)}-${request.longitude.toFixed(4)}`;
+  return cached(key, async () => {
+    const url = new URL("https://geo.api.gouv.fr/communes");
+    url.searchParams.set("lat", String(request.latitude));
+    url.searchParams.set("lon", String(request.longitude));
+    url.searchParams.set("fields", "codeDepartement");
+    url.searchParams.set("format", "json");
+    const communes = await asJson(url);
+    return communes[0]?.codeDepartement || null;
+  });
+}
+
+async function franceStations(headers, department) {
+  return cached(`france-climate-stations-${department}`, async () => {
+    const url = new URL("https://public-api.meteofrance.fr/public/DPClim/v1/liste-stations/infrahoraire-6m");
+    url.searchParams.set("id-departement", department);
+    const stations = await asJson(url, { headers });
+    return stations.map((row) => ({
+      id: String(row.id ?? "").padStart(8, "0"),
+      name: row.nom || "Météo-France station",
+      latitude: finite(row.lat),
+      longitude: finite(row.lon)
     })).filter((station) => station.id);
   });
 }
@@ -409,7 +424,9 @@ async function franceStations(headers) {
 async function provideFrance(request, env) {
   const headers = await franceAuthHeaders(env);
   if (!headers) return { observations: [], notice: "Météo-France needs a METEOFRANCE_APPLICATION_ID or METEOFRANCE_API_KEY; using Open-Meteo fallback" };
-  const station = nearestStation(await franceStations(headers), request);
+  const department = await franceDepartment(request);
+  if (!department) return { observations: [], notice: "No French administrative department was found for this location" };
+  const station = nearestStation(await franceStations(headers, department), request);
   if (!station) return { observations: [], notice: "No Météo-France station was found within 75 km" };
   const url = new URL("https://public-api.meteofrance.fr/public/DPClim/v1/commande-station/infrahoraire-6m");
   url.searchParams.set("id-station", station.id);
