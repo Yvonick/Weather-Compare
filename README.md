@@ -23,7 +23,7 @@ export KNMI_API_KEY="..."
 npm start
 ```
 
-For Météo-France, subscribe the application to the Climatological Data API. The server exchanges `METEOFRANCE_APPLICATION_ID` for short-lived OAuth2 tokens automatically and uses the official French geographic API to select the correct departmental station archive. The climatology API's quality-controlled hourly `TN` and `TX` fields supply the within-hour range; its six-minute historical product is precipitation-only. `METEOFRANCE_API_KEY` remains available for a manually generated Bearer token, but that token normally expires and is less suitable for a deployed app.
+For Météo-France, subscribe the application to the Climatological Data API. The server exchanges `METEOFRANCE_APPLICATION_ID` for short-lived OAuth2 tokens automatically, uses the official French geographic API and climatology catalog to select nearby stations, then reads the quality-controlled hourly `T`, `TN`, and `TX` fields through data.gouv.fr's public tabular API. DPClim remains a fallback. The six-minute historical product is precipitation-only. `METEOFRANCE_API_KEY` remains available for a manually generated API key, but that key normally expires and is less suitable for a deployed app.
 
 See `.env.example` for the variable names. Credentials stay on the server; the browser only calls the same-origin `/api/temperature-range` endpoint. If a provider is unconfigured, unavailable, outside its recent-data window, or has no nearby station, affected buckets remain populated from Open-Meteo and the UI explains the fallback. The free Met Office one-minute feed is a rolling seven-day dataset, so older UK periods use Open-Meteo unless a separate archival integration is configured.
 

@@ -39,11 +39,14 @@ test("Météo-France uses official hourly extrema from the resolved department",
         { id: 35281001, nom: "RENNES-ST JACQUES", lat: 48.0688, lon: -1.734, dateDebut: "1945-01-01 00:00:00", dateFin: "", posteOuvert: true }
       ]);
     }
-    if (url.includes("/DPClim/v1/commande-station/horaire")) {
-      return Response.json({ elaboreProduitAvecDemandeResponse: { return: "order-1" } }, { status: 202 });
+    if (url === "https://www.data.gouv.fr/api/1/datasets/6569b4473bedf2e7abad3b72/") {
+      return Response.json({ resources: [{ id: "resource-35", url: "https://files.test/H_35_latest-2025-2026.csv.gz" }] });
     }
-    if (url.includes("/DPClim/v1/commande/fichier")) {
-      return new Response("NUM_POSTE;AAAAMMJJHH;T;TN;TX\n35281001;2026083000;15.2;14.6;15.8\n35281001;2026083001;15.7;15.0;16.3\n");
+    if (url.includes("tabular-api.data.gouv.fr/api/resources/resource-35/data/json/")) {
+      return Response.json([
+        { NUM_POSTE: 35281001, AAAAMMJJHH: 2026083000, T: 15.2, TN: 14.6, TX: 15.8 },
+        { NUM_POSTE: 35281001, AAAAMMJJHH: 2026083001, T: 15.7, TN: 15.0, TX: 16.3 }
+      ]);
     }
     throw new Error(`Unexpected URL ${url}`);
   };
@@ -67,11 +70,11 @@ test("Météo-France uses official hourly extrema from the resolved department",
     });
     assert.ok(urls.some((url) => url.includes("id-departement=35")));
     assert.ok(urls.some((url) => url.includes("parametre=temperature")));
-    const orderUrl = new URL(urls.find((url) => url.includes("/commande-station/horaire")));
-    assert.equal(orderUrl.searchParams.get("id-station"), "35281001");
-    assert.equal(orderUrl.searchParams.get("date-deb-periode"), "2026-08-29T10:00:00Z");
-    assert.equal(orderUrl.searchParams.get("date-fin-periode"), "2026-08-31T14:00:00Z");
-    assert.equal(urls.filter((url) => url.includes("/commande-station/horaire")).length, 1);
+    const dataUrl = new URL(urls.find((url) => url.includes("tabular-api.data.gouv.fr")));
+    assert.equal(dataUrl.searchParams.get("NUM_POSTE__exact"), "35281001");
+    assert.equal(dataUrl.searchParams.get("AAAAMMJJHH__greater"), "2026082910");
+    assert.equal(dataUrl.searchParams.get("AAAAMMJJHH__less"), "2026083114");
+    assert.equal(urls.filter((url) => url.includes("/commande-station/horaire")).length, 0);
     assert.ok(urls.filter((url) => url.includes("/DPClim/")).every((url) => new URL(url).searchParams.get("tokenOauth2") === "test-access-token"));
     assert.ok(urls.every((url) => !url.includes("/DPObs/")));
   } finally {

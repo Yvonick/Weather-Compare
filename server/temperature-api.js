@@ -3,6 +3,8 @@ import { UK_STATIONS } from "./uk-stations.js";
 const MAX_RANGE_DAYS = 31;
 const MAX_STATION_DISTANCE_KM = 75;
 const UK_BUCKET = "https://met-office-land-observations-data.s3.eu-west-2.amazonaws.com/";
+const FRANCE_HOURLY_DATASET = "https://www.data.gouv.fr/api/1/datasets/6569b4473bedf2e7abad3b72/";
+const FRANCE_TABULAR_API = "https://tabular-api.data.gouv.fr/api/resources";
 const cache = new Map();
 
 const PROVIDER_INFO = Object.freeze({
@@ -10,7 +12,7 @@ const PROVIDER_INFO = Object.freeze({
   DK: { id: "dmi", name: "DMI", cadenceMinutes: 10, rangeMethod: "hourly extrema / 10-minute observations", docsUrl: "https://opendatadocs.dmi.govcloud.dk/en/" },
   NO: { id: "frost", name: "MET Norway Frost", cadenceMinutes: 60, rangeMethod: "official hourly extrema", docsUrl: "https://frost.met.no/" },
   DE: { id: "dwd", name: "DWD Climate Data Center", cadenceMinutes: 10, rangeMethod: "official 10-minute extrema", docsUrl: "https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/10_minutes/" },
-  FR: { id: "meteo-france", name: "Météo-France", cadenceMinutes: 60, rangeMethod: "official hourly extrema", docsUrl: "https://confluence-meteofrance.atlassian.net/wiki/spaces/OpenDataMeteoFrance/pages/854196251/API+Cibl+e+Clim+EN" },
+  FR: { id: "meteo-france", name: "Météo-France", cadenceMinutes: 60, rangeMethod: "official hourly extrema", docsUrl: "https://www.data.gouv.fr/datasets/donnees-climatologiques-de-base-horaires/" },
   CH: { id: "meteoswiss", name: "MeteoSwiss", cadenceMinutes: 10, rangeMethod: "10-minute observations", docsUrl: "https://opendatadocs.meteoswiss.ch/a-data-groundbased/a1-automatic-weather-stations" },
   NL: { id: "knmi", name: "KNMI", cadenceMinutes: 10, rangeMethod: "10-minute observations", docsUrl: "https://developer.dataplatform.knmi.nl/edr-api" },
   AT: { id: "geosphere", name: "GeoSphere Austria", cadenceMinutes: 10, rangeMethod: "official 10-minute extrema", docsUrl: "https://data.hub.geosphere.at/showcase/api-grundlagen-/" },
@@ -445,14 +447,14 @@ const franceStationCovers = (station, request) => (
   && (!station.endDate || station.endDate >= request.startDate)
 );
 
-const franceSignal = () => (
+const franceSignal = (milliseconds = 10000) => (
   typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
-    ? AbortSignal.timeout(10000)
+    ? AbortSignal.timeout(milliseconds)
     : undefined
 );
 
-function franceHourlyObservations(text, request) {
-  return parseDelimited(text).map((row) => {
+function franceHourlyRows(rows, request) {
+  return rows.map((row) => {
     const rawTime = column(row, ["AAAAMMJJHH", "AAAAMMJJHHMN", "date", "validite", "timestamp"]);
     const compact = String(rawTime || "").replace(/\.0$/, "").match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})?(\d{2})?$/);
     const time = compact
@@ -470,6 +472,41 @@ function franceHourlyObservations(text, request) {
       request
     );
   }).filter((observation) => observation?.explicitRange);
+}
+
+const franceHourlyObservations = (text, request) => franceHourlyRows(parseDelimited(text), request);
+
+async function franceDataGouvResources(department, startYear, endYear) {
+  const resources = await cached("france-hourly-data-gouv-resources", async () => {
+    const payload = await asJson(FRANCE_HOURLY_DATASET, { signal: franceSignal(20000) });
+    return (payload.resources || []).map((resource) => {
+      const match = String(resource.url || "").match(/\/H_([^/_]+)_(?:latest-|previous-)?(\d{4})-(\d{4})\.csv\.gz$/i);
+      return match ? { id: resource.id, department: match[1].toUpperCase(), startYear: Number(match[2]), endYear: Number(match[3]) } : null;
+    }).filter(Boolean);
+  }, 3600000);
+  return resources.filter((resource) => (
+    resource.department === department.toUpperCase()
+    && resource.startYear <= endYear
+    && resource.endYear >= startYear
+  ));
+}
+
+async function franceDataGouvArchive(station, request, department, startTime, endTime) {
+  const resources = await franceDataGouvResources(department, Number(startTime.slice(0, 4)), Number(endTime.slice(0, 4)));
+  if (!resources.length) return [];
+  const startCompact = startTime.replace(/\D/g, "").slice(0, 10);
+  const endCompact = endTime.replace(/\D/g, "").slice(0, 10);
+  const rows = [];
+  for (const resource of resources) {
+    const url = new URL(`${FRANCE_TABULAR_API}/${resource.id}/data/json/`);
+    url.searchParams.set("NUM_POSTE__exact", String(Number(station.id)));
+    url.searchParams.set("AAAAMMJJHH__greater", startCompact);
+    url.searchParams.set("AAAAMMJJHH__less", endCompact);
+    url.searchParams.set("columns", "NUM_POSTE,NOM_USUEL,LAT,LON,AAAAMMJJHH,T,TN,TX");
+    const payload = await asJson(url, { signal: franceSignal(20000) });
+    if (Array.isArray(payload)) rows.push(...payload);
+  }
+  return franceHourlyRows(rows, request);
 }
 
 async function franceHourlyArchive(station, request, auth, startTime, endTime) {
@@ -523,6 +560,14 @@ async function provideFrance(request, env) {
   const startTime = isoSeconds(floorHour(start));
   const endTime = isoSeconds(ceilHour(end));
   let lastIssue = "no hourly extrema were returned";
+  for (const station of candidates) {
+    try {
+      const observations = await franceDataGouvArchive(station, request, department, startTime, endTime);
+      if (observations.length) return { source: providerSource("FR", station), observations };
+    } catch (error) {
+      lastIssue = `data.gouv.fr for ${station.name}: ${error.message}`;
+    }
+  }
   for (const station of candidates) {
     try {
       const result = await franceHourlyArchive(station, request, auth, startTime, endTime);
