@@ -1,27 +1,35 @@
 export function getBucketKey(timeString, granularity) {
   const [date, clock = "00:00"] = timeString.split("T");
   if (granularity === "day") return date;
-  const size = granularity === "12h" ? 12 : granularity === "6h" ? 6 : 3;
-  const hour = Number(clock.slice(0, 2));
-  return `${date}T${String(Math.floor(hour / size) * size).padStart(2, "0")}:00`;
+  const sizeMinutes = granularityMinutes(granularity);
+  const [hour = 0, minute = 0] = clock.split(":").map(Number);
+  const startMinutes = Math.floor((hour * 60 + minute) / sizeMinutes) * sizeMinutes;
+  return `${date}T${formatClock(startMinutes)}`;
 }
+
+const GRANULARITY_MINUTES = Object.freeze({ "30m": 30, "1h": 60, "3h": 180, "6h": 360, "12h": 720 });
+const granularityMinutes = (granularity) => GRANULARITY_MINUTES[granularity] || GRANULARITY_MINUTES["3h"];
+const formatClock = (minutes) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 
 export function formatBucketLabel(key, granularity = "day") {
   const [date, time] = key.split("T");
   const [year, month, day] = date.split("-");
   const dateLabel = `${day}/${month}/${year}`;
   if (!time || granularity === "day") return dateLabel;
-  const startHour = Number(time.slice(0, 2));
-  const duration = granularity === "12h" ? 12 : granularity === "6h" ? 6 : 3;
-  const endHour = Math.min(23, startHour + duration - 1);
-  return `${dateLabel} ${String(startHour).padStart(2, "0")}:00-${String(endHour).padStart(2, "0")}:59`;
+  const [startHour = 0, startMinute = 0] = time.split(":").map(Number);
+  const startMinutes = startHour * 60 + startMinute;
+  const endMinutes = Math.min(1439, startMinutes + granularityMinutes(granularity) - 1);
+  return `${dateLabel} ${formatClock(startMinutes)}-${formatClock(endMinutes)}`;
 }
 
 function emptyBucket(key, granularity) {
   return {
     key,
     label: formatBucketLabel(key, granularity),
+    granularity,
     temperatureMin: Infinity, temperatureMax: -Infinity, temperatureSum: 0, temperatureCount: 0,
+    stationTemperatureMin: Infinity, stationTemperatureMax: -Infinity,
+    stationTemperatureSum: 0, stationTemperatureCount: 0, stationTemperatureExplicitRange: false,
     precipitationSum: 0, precipitationCount: 0,
     snowfallSum: 0, snowfallCount: 0,
     sunshineSeconds: 0, sunshineCount: 0,
@@ -103,6 +111,23 @@ function ingestAir(hourly = {}, ensureBucket) {
   });
 }
 
+function ingestTemperatureObservations(observations = [], ensureBucket) {
+  observations.forEach((observation) => {
+    if (!observation?.time) return;
+    const bucket = ensureBucket(observation.time);
+    const avg = Number.isFinite(observation.avg) ? observation.avg : null;
+    const min = Number.isFinite(observation.min) ? observation.min : avg;
+    const max = Number.isFinite(observation.max) ? observation.max : avg;
+    if (avg !== null) {
+      bucket.stationTemperatureSum += avg * Math.max(1, Number(observation.sampleCount) || 1);
+      bucket.stationTemperatureCount += Math.max(1, Number(observation.sampleCount) || 1);
+    }
+    if (min !== null) bucket.stationTemperatureMin = Math.min(bucket.stationTemperatureMin, min);
+    if (max !== null) bucket.stationTemperatureMax = Math.max(bucket.stationTemperatureMax, max);
+    bucket.stationTemperatureExplicitRange ||= Boolean(observation.explicitRange && min !== null && max !== null);
+  });
+}
+
 function average(bucket, prefix) {
   return bucket[`${prefix}Count`] ? bucket[`${prefix}Sum`] / bucket[`${prefix}Count`] : null;
 }
@@ -111,12 +136,28 @@ function finalize(bucket) {
   const direction = bucket.windDirectionCount
     ? (Math.atan2(bucket.windDirectionSin / bucket.windDirectionCount, bucket.windDirectionCos / bucket.windDirectionCount) * 180 / Math.PI + 360) % 360
     : null;
+  const usesStationTemperature = bucket.stationTemperatureCount > 0
+    || Number.isFinite(bucket.stationTemperatureMin)
+    || Number.isFinite(bucket.stationTemperatureMax);
+  const temperatureCount = usesStationTemperature ? bucket.stationTemperatureCount : bucket.temperatureCount;
+  const hasRange = usesStationTemperature
+    ? bucket.stationTemperatureExplicitRange || temperatureCount > 1
+    : temperatureCount > 1;
   return {
     key: bucket.key,
     label: bucket.label,
-    temperatureMin: bucket.temperatureCount ? bucket.temperatureMin : null,
-    temperatureAvg: average(bucket, "temperature"),
-    temperatureMax: bucket.temperatureCount ? bucket.temperatureMax : null,
+    temperatureMin: hasRange
+      ? (usesStationTemperature ? bucket.stationTemperatureMin : bucket.temperatureMin)
+      : null,
+    temperatureAvg: usesStationTemperature
+      ? (bucket.stationTemperatureCount ? bucket.stationTemperatureSum / bucket.stationTemperatureCount : null)
+      : average(bucket, "temperature"),
+    temperatureMax: hasRange
+      ? (usesStationTemperature ? bucket.stationTemperatureMax : bucket.temperatureMax)
+      : null,
+    temperatureSampleCount: temperatureCount,
+    temperatureRangeAvailable: hasRange,
+    temperatureSourceKind: usesStationTemperature ? "national-station" : "open-meteo",
     precipitationSum: bucket.precipitationCount ? bucket.precipitationSum : null,
     snowfallSum: bucket.snowfallCount ? bucket.snowfallSum : null,
     sunshineHours: bucket.sunshineCount ? bucket.sunshineSeconds / 3600 : null,
@@ -147,7 +188,7 @@ const daysBetween = (leftDate, rightDate) => Math.round(
   (Date.parse(`${leftDate}T00:00:00Z`) - Date.parse(`${rightDate}T00:00:00Z`)) / 86400000
 );
 
-export function aggregateLocationData(resolved, weather, air, granularity, sourceLabels = {}, period = {}) {
+export function aggregateLocationData(resolved, weather, air, granularity, sourceLabels = {}, period = {}, temperatureRange = {}) {
   const buckets = new Map();
   const ensureBucket = (time) => {
     const key = getBucketKey(time, granularity);
@@ -156,11 +197,13 @@ export function aggregateLocationData(resolved, weather, air, granularity, sourc
   };
   ingestWeather(weather.hourly, ensureBucket);
   ingestAir(air.hourly, ensureBucket);
+  ingestTemperatureObservations(temperatureRange.observations, ensureBucket);
   return {
     ...resolved,
     timezone: weather.timezone || air.timezone || resolved.timezone || "auto",
     weatherSource: sourceLabels.weather || null,
     airSource: sourceLabels.air || null,
+    temperatureSource: temperatureRange.source || null,
     rows: [...buckets.values()].sort((left, right) => left.key.localeCompare(right.key)).map(finalize).map((row) => {
       const dataKind = period.kind === "forecast" ? "forecast" : "historical";
       const forecastLeadDays = dataKind === "forecast" && period.forecastStartDate

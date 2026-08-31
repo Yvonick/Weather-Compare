@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Compare historical and forecast weather and air quality across places.">
   <title>Weather Compare</title>
-  <link rel="stylesheet" href="./styles.css?v=chart-encoding-2">
+  <link rel="stylesheet" href="./styles.css?v=chart-layout-3">
 </head>
 <body>
   <main class="page-shell">
@@ -43,9 +43,10 @@
           </label>
 
           <div class="field-grid">
-            <label class="field"><span>Start date</span><input id="start-date-input" name="startDate" type="date"></label>
-            <label class="field"><span>End date</span><input id="end-date-input" name="endDate" type="date"></label>
+            <label class="field"><span>Start date</span><input id="start-date-input" name="startDate" type="text" inputmode="numeric" placeholder="dd/mm/yyyy" maxlength="10" pattern="\d{2}/\d{2}/\d{4}" aria-describedby="date-format-note"></label>
+            <label class="field"><span>End date</span><input id="end-date-input" name="endDate" type="text" inputmode="numeric" placeholder="dd/mm/yyyy" maxlength="10" pattern="\d{2}/\d{2}/\d{4}" aria-describedby="date-format-note"></label>
           </div>
+          <small id="date-format-note" class="field-note">Date format: dd/mm/yyyy</small>
 
           <div class="field-grid">
             <label class="field">
@@ -55,6 +56,8 @@
                 <option value="12h">12 hours</option>
                 <option value="6h">6 hours</option>
                 <option value="3h">3 hours</option>
+                <option value="1h">1 hour</option>
+                <option value="30m">30 minutes (where supported)</option>
               </select>
             </label>
             <label class="field">
@@ -94,7 +97,7 @@
         <section class="panel legend-panel" aria-labelledby="legend-title">
           <p class="eyebrow">Resolved locations</p>
           <h2 id="legend-title">Series legend</h2>
-          <p class="note">Colors and marker shapes identify locations across every chart. Dashed chart lines mean forecast only. Source labels identify the weather and air-quality grid points.</p>
+          <p class="note">Colors and marker shapes identify locations across every chart. Dashed chart lines mean forecast only. Temperature source labels identify the station, distance, and range method; uncovered buckets use the Open-Meteo fallback.</p>
           <div id="series-legend" class="series-legend"><p class="empty-state">Load at least one location to show the legend.</p></div>
         </section>
       </aside>
@@ -109,6 +112,15 @@
             <li><a href="https://open-meteo.com/en/docs/historical-weather-api" target="_blank" rel="noreferrer">Open-Meteo Historical Weather API</a> — archived weather variables</li>
             <li><a href="https://open-meteo.com/en/docs/air-quality-api" target="_blank" rel="noreferrer">Open-Meteo Air Quality API</a> — air-quality indicators and UV index</li>
             <li><a href="https://open-meteo.com/en/docs/geocoding-api" target="_blank" rel="noreferrer">Open-Meteo Geocoding API</a> — place lookup and source labels</li>
+            <li><a href="https://registry.opendata.aws/met-office-uk-land-observations/" target="_blank" rel="noreferrer">UK Met Office</a> — rolling seven-day archive of one-minute land observations</li>
+            <li><a href="https://opendatadocs.dmi.govcloud.dk/en/" target="_blank" rel="noreferrer">DMI Denmark</a> — hourly extrema and ten-minute observations</li>
+            <li><a href="https://frost.met.no/" target="_blank" rel="noreferrer">MET Norway Frost</a> — official hourly aggregates (client ID required)</li>
+            <li><a href="https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/10_minutes/" target="_blank" rel="noreferrer">DWD Germany</a> — ten-minute temperatures and extrema</li>
+            <li><a href="https://confluence-meteofrance.atlassian.net/wiki/spaces/OpenDataMeteoFrance/pages/854196251/API+Cibl+e+Clim+EN" target="_blank" rel="noreferrer">Météo-France</a> — six-minute archive observations (OAuth application required)</li>
+            <li><a href="https://opendatadocs.meteoswiss.ch/a-data-groundbased/a1-automatic-weather-stations" target="_blank" rel="noreferrer">MeteoSwiss</a> — ten-minute automatic-station observations</li>
+            <li><a href="https://developer.dataplatform.knmi.nl/edr-api" target="_blank" rel="noreferrer">KNMI Netherlands</a> — ten-minute station observations (API key required)</li>
+            <li><a href="https://data.hub.geosphere.at/showcase/api-grundlagen-/" target="_blank" rel="noreferrer">GeoSphere Austria</a> — official ten-minute extrema</li>
+            <li><a href="https://en.ilmatieteenlaitos.fi/open-data-manual-wfs-examples-and-guidelines" target="_blank" rel="noreferrer">FMI Finland</a> — ten-minute station observations</li>
             <li><a href="https://airindex.eea.europa.eu/AQI/index.html" target="_blank" rel="noreferrer">EEA European AQI methodology</a> — air-quality guide bands</li>
             <li><a href="https://www.geonames.org/" target="_blank" rel="noreferrer">GeoNames</a> — underlying place dataset attribution</li>
           </ul>
@@ -133,6 +145,6 @@
   </dialog>
 
   <noscript><p class="startup-error">Weather Compare needs JavaScript enabled to create the location search controls.</p></noscript>
-  <script defer src="./app.bundle.js?v=chart-encoding-2"></script>
+  <script defer src="./app.bundle.js?v=chart-layout-3"></script>
 </body>
 </html>

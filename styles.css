@@ -48,6 +48,7 @@ h3 { margin: 0; font-size: 1rem; font-weight: 500; }
 .controls-panel { display: grid; gap: 1rem; }
 
 .field-block, .field { display: grid; gap: .45rem; min-width: 0; }
+.field-note { margin-top: -.35rem; color: var(--muted); font-size: .68rem; }
 .field-heading { display: flex; justify-content: space-between; gap: 1rem; }
 .field-grid, .action-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem; }
 .checkbox-field { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .65rem; align-items: start; border: 1px solid var(--line); border-radius: .75rem; padding: .7rem .8rem; }
@@ -80,8 +81,12 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--green
 .location-search-popover[hidden] { display: none; }
 .location-search-status { margin: 0; padding: .45rem .55rem; color: var(--muted); font-size: .72rem; line-height: 1.4; }
 .location-options { display: grid; max-height: 17rem; overflow: auto; gap: .2rem; }
-.location-option { width: 100%; border: 0; border-radius: .5rem; background: transparent; padding: .6rem .55rem; text-align: left; font-size: .82rem; line-height: 1.4; }
+.location-option { display: grid; width: 100%; border: 0; border-radius: .5rem; background: transparent; padding: .6rem .55rem; text-align: left; line-height: 1.35; }
+.location-option strong { color: var(--ink); font-size: .85rem; font-weight: 650; }
+.location-option span { color: var(--muted); font-size: .76rem; }
+.location-option small { color: var(--green-dark); font-size: .68rem; }
 .location-option:hover, .location-option.is-active { background: #e3efe8; color: var(--green-dark); }
+.location-option:hover strong, .location-option.is-active strong { color: var(--green-dark); }
 .location-actions { display: flex; gap: .3rem; }
 .icon-button { display: inline-grid; width: 2.8rem; height: 2.8rem; place-items: center; padding: 0; border-color: var(--line); }
 .icon-button svg { width: 1.1rem; height: 1.1rem; }
@@ -124,9 +129,13 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--green
 .chart-unit { white-space: nowrap; }
 .text-button { padding: .25rem .35rem; background: transparent; border-radius: .35rem; color: var(--muted); font-size: .72rem; text-transform: uppercase; white-space: nowrap; }
 .chart-frame { position: relative; width: 100%; min-width: 0; max-width: 100%; overflow: hidden; }
-.chart-scroll { width: 100%; min-width: 0; max-width: 100%; overflow: auto; contain: inline-size; border: 1px solid var(--line); border-radius: .75rem; background: #fff; }
+.chart-scroll { width: 100%; min-width: 0; max-width: 100%; overflow: auto; contain: inline-size; overscroll-behavior-inline: contain; scrollbar-gutter: stable; border: 1px solid var(--line); border-radius: .75rem; background: #fff; }
+.chart-scroll:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 .chart-svg { display: block; }
+.chart-y-axis { position: absolute; z-index: 2; top: 1px; left: 1px; display: block; pointer-events: none; filter: drop-shadow(5px 0 4px rgb(0 0 0 / .06)); }
 .axis-label { fill: var(--muted); font-family: inherit; font-size: 11px; }
+.axis-time-label { font-weight: 600; }
+.axis-date-label { font-size: 10px; }
 .forecast-axis-label { fill: var(--green-dark); font-family: inherit; font-size: 10px; font-weight: 700; letter-spacing: .08em; }
 .forecast-date-label { fill: var(--green-dark); font-weight: 700; }
 .chart-tooltip { position: absolute; z-index: 3; max-width: 230px; border: 1px solid var(--line-strong); border-radius: .55rem; background: #111; color: #fff; padding: .5rem .65rem; font-size: .72rem; line-height: 1.4; pointer-events: none; }

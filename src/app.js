@@ -1,4 +1,4 @@
-import { fetchLocationData, suggestLocations } from "./api.js";
+import { fetchLocationData, suggestLocationOptions } from "./api.js";
 import { settleWithConcurrency } from "./async.js";
 import { createChartPopout, renderDashboard } from "./charts.js";
 import { CONTINUOUS_PRESET, MAX_LOCATIONS, SERIES_STYLES } from "./config.js";
@@ -7,7 +7,9 @@ import {
   buildShareUrl,
   createDefaultSettings,
   describeWindow,
+  formatDisplayDate,
   loadSettings,
+  parseDisplayDate,
   saveSettings,
   syncPresetDates,
   validateSettings
@@ -156,8 +158,8 @@ function renderLocationControls() {
 
 function renderControls() {
   elements.preset.value = settings.preset;
-  elements.start.value = settings.startDate;
-  elements.end.value = settings.endDate;
+  elements.start.value = formatDisplayDate(settings.startDate);
+  elements.end.value = formatDisplayDate(settings.endDate);
   elements.granularity.value = settings.granularity;
   elements.view.value = settings.view;
   elements.tableGradient.checked = settings.tableGradient;
@@ -198,8 +200,13 @@ function renderLegend(series) {
     const query = document.createElement("small");
     query.textContent = `Query: ${location.query} · ${Number(location.latitude).toFixed(3)}, ${Number(location.longitude).toFixed(3)} · ${location.timezone}`;
     const sources = document.createElement("small");
-    sources.textContent = `Weather: ${location.weatherSource || "source grid"} · Air: ${location.airSource || "source grid"}`;
-    content.append(name, query, sources);
+    sources.textContent = `Weather: Open-Meteo (${location.weatherSource || "source grid"}) · Air: Open-Meteo (${location.airSource || "source grid"})`;
+    const temperature = document.createElement("small");
+    const temperatureSource = location.temperatureSource;
+    temperature.textContent = temperatureSource
+      ? `Temperature ranges: ${temperatureSource.name} · ${temperatureSource.stationName || "station"}${Number.isFinite(temperatureSource.stationDistanceKm) ? ` (${temperatureSource.stationDistanceKm.toFixed(1)} km)` : ""} · ${temperatureSource.rangeMethod}`
+      : "Temperature ranges: Open-Meteo hourly grid fallback (a single hourly sample has no within-hour range)";
+    content.append(name, query, temperature, sources);
     if (location.dataNotices?.length) {
       const notice = document.createElement("small");
       notice.className = "data-notice";
@@ -241,7 +248,7 @@ function renderLocationSearch() {
   popover.hidden = !locationSearch.open;
   status.textContent = locationSearch.message;
   listbox.replaceChildren();
-  locationSearch.results.forEach((value, resultIndex) => {
+  locationSearch.results.forEach((suggestion, resultIndex) => {
     const option = document.createElement("button");
     option.type = "button";
     option.id = `location-options-${index}-option-${resultIndex}`;
@@ -250,7 +257,14 @@ function renderLocationSearch() {
     option.setAttribute("aria-selected", String(resultIndex === locationSearch.activeIndex));
     option.dataset.suggestionIndex = resultIndex;
     option.dataset.locationIndex = index;
-    option.textContent = value;
+    option.setAttribute("aria-label", suggestion.value);
+    const primary = document.createElement("strong");
+    primary.textContent = suggestion.name;
+    const context = document.createElement("span");
+    context.textContent = suggestion.context;
+    const meta = document.createElement("small");
+    meta.textContent = suggestion.meta;
+    option.append(primary, context, meta);
     listbox.append(option);
   });
   if (locationSearch.activeIndex >= 0) {
@@ -286,7 +300,7 @@ function closeLocationSearch() {
 
 function selectLocationSuggestion(index, resultIndex) {
   if (locationSearch.index !== index || !locationSearch.results[resultIndex]) return;
-  const value = locationSearch.results[resultIndex];
+  const value = locationSearch.results[resultIndex].value;
   settings.locations[index] = value;
   const input = elements.locationList.querySelector(`input[data-location-index="${index}"]`);
   if (input) input.value = value;
@@ -306,7 +320,7 @@ function queueSuggestions(index, query) {
     activeIndex: -1,
     open: true,
     loading: trimmed.length >= 2,
-    message: trimmed.length < 2 ? "Type at least 2 characters to search." : "Searching Open-Meteo…"
+    message: trimmed.length < 2 ? "Type at least 2 characters to search." : "Searching places…"
   };
   renderLocationSearch();
   if (trimmed.length < 2) {
@@ -315,7 +329,7 @@ function queueSuggestions(index, query) {
   suggestionTimer = setTimeout(async () => {
     suggestionRequest = new AbortController();
     try {
-      const results = await suggestLocations(query, suggestionRequest.signal);
+      const results = await suggestLocationOptions(query, suggestionRequest.signal);
       if (locationSearch.index !== index || locationSearch.query !== query) return;
       locationSearch = {
         ...locationSearch,
@@ -521,12 +535,12 @@ elements.preset.addEventListener("change", () => {
   setStatus("Time window changed. Load comparison to refresh the data.");
 });
 elements.start.addEventListener("change", () => {
-  settings.startDate = elements.start.value;
+  settings.startDate = parseDisplayDate(elements.start.value) || elements.start.value.trim();
   settings.preset = "custom";
   renderControls();
 });
 elements.end.addEventListener("change", () => {
-  settings.endDate = elements.end.value;
+  settings.endDate = parseDisplayDate(elements.end.value) || elements.end.value.trim();
   settings.preset = "custom";
   renderControls();
 });

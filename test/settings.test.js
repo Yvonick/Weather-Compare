@@ -4,7 +4,9 @@ import {
   buildShareUrl,
   createDefaultSettings,
   describeWindow,
+  formatDisplayDate,
   normalizeSettings,
+  parseDisplayDate,
   settingsFromUrl,
   syncPresetDates,
   validateSettings
@@ -43,6 +45,23 @@ test("continuous preset spans seven historical and seven forecast days", () => {
   assert.equal(settings.startDate, "2026-07-30");
   assert.equal(settings.endDate, "2026-08-12");
   assert.match(describeWindow(settings), /next 7 forecast days/);
+});
+
+test("normalization accepts the provider's native hourly granularity", () => {
+  const settings = normalizeSettings({ ...createDefaultSettings(now), granularity: "1h" }, now);
+  assert.equal(settings.granularity, "1h");
+});
+
+test("normalization accepts half-hour buckets for sub-hourly station feeds", () => {
+  const settings = normalizeSettings({ ...createDefaultSettings(now), granularity: "30m" }, now);
+  assert.equal(settings.granularity, "30m");
+});
+
+test("display dates use dd/mm/yyyy and round-trip to internal ISO dates", () => {
+  assert.equal(formatDisplayDate("2026-08-06"), "06/08/2026");
+  assert.equal(parseDisplayDate("06/08/2026"), "2026-08-06");
+  assert.equal(parseDisplayDate("31/02/2026"), null);
+  assert.equal(describeWindow({ ...createDefaultSettings(now), preset: "custom" }), "30/07/2026 to 12/08/2026");
 });
 
 test("share URLs round-trip all compatibility parameters", () => {

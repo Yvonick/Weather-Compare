@@ -1,5 +1,5 @@
 import { aggregateLocationData } from "./aggregate.js";
-import { ENDPOINTS } from "./config.js";
+import { ENDPOINTS, NATIONAL_TEMPERATURE_COUNTRIES } from "./config.js";
 
 const normalize = (value) => String(value ?? "")
   .normalize("NFD")
@@ -22,19 +22,56 @@ export function buildLocationLabel(result) {
   return parts.filter(Boolean).join(", ");
 }
 
+const FEATURE_IMPORTANCE = Object.freeze({
+  PPLC: 170,
+  PPLA: 110,
+  PPLA2: 35,
+  PPLA3: 55,
+  PPLA4: 35,
+  PPL: 22,
+  PPLG: 18,
+  PPLL: -35,
+  PPLX: -20,
+  AIRP: -15
+});
+
 function candidateScore(result, parsed) {
   const label = normalize(buildLocationLabel(result));
   const name = normalize(result.name);
   const primary = normalize(parsed.primary);
   const raw = normalize(parsed.raw);
-  let score = name === primary ? 120 : name.includes(primary) ? 75 : 0;
-  if (label === raw) score += 240;
-  else if (raw && label.includes(raw)) score += 140;
+  const featureCode = String(result.feature_code || "").toUpperCase();
+  const country = normalize(result.country);
+  const countryCode = normalize(result.country_code);
+  const countryHint = normalize(parsed.parts.at(-1));
+  const population = Number(result.population);
+
+  let score = name === primary ? 220 : name.startsWith(primary) ? 180 : name.includes(primary) ? 145 : 0;
+  if (label === raw) score += 150;
+  else if (raw && label.startsWith(raw)) score += 90;
+  else if (raw && label.includes(raw)) score += 70;
   parsed.parts.map(normalize).forEach((part, index) => {
-    if (part && label.includes(part)) score += index ? 44 : 28;
+    if (!part) return;
+    const matchesCountry = index > 0 && (part === country || part === countryCode);
+    if (matchesCountry) score += 125;
+    else if (label.includes(part)) score += index ? 65 : 35;
   });
-  if (Number.isFinite(result.population)) score += Math.min(18, Math.log10(result.population + 1) * 3);
+  if (parsed.parts.length > 1 && countryHint && (countryHint === country || countryHint === countryCode)) score += 55;
+  score += FEATURE_IMPORTANCE[featureCode] || 0;
+  score += Number.isFinite(population) && population > 0
+    ? Math.min(155, Math.log10(population + 1) * 22)
+    : -12;
+  if (Number.isFinite(result.searchRank)) score += Math.max(0, 90 - result.searchRank * 9);
   return score;
+}
+
+export function rankLocationCandidates(results, query) {
+  const parsed = queryParts(query);
+  return [...results].sort((left, right) => {
+    const scoreDifference = candidateScore(right, parsed) - candidateScore(left, parsed);
+    if (scoreDifference) return scoreDifference;
+    return buildLocationLabel(left).localeCompare(buildLocationLabel(right));
+  });
 }
 
 const wait = (milliseconds, signal) => new Promise((resolve, reject) => {
@@ -89,26 +126,66 @@ async function geocodeCandidates(query, count = 12, signal) {
   ].filter(Boolean))];
   const candidateMap = new Map();
 
-  await Promise.all(variants.map(async (variant) => {
+  await Promise.all(variants.map(async (variant, variantIndex) => {
     const url = new URL(ENDPOINTS.geocode);
     url.searchParams.set("name", variant);
     url.searchParams.set("count", String(count));
     url.searchParams.set("language", "en");
     url.searchParams.set("format", "json");
     const payload = await fetchJson(url, signal);
-    for (const result of payload.results || []) {
+    for (const [resultIndex, result] of (payload.results || []).entries()) {
       const key = [result.latitude, result.longitude, normalize(result.name), normalize(result.admin1), normalize(result.country)].join("|");
-      if (!candidateMap.has(key)) candidateMap.set(key, result);
+      const searchRank = resultIndex + variantIndex * 2;
+      const existing = candidateMap.get(key);
+      if (!existing || searchRank < existing.searchRank) candidateMap.set(key, { ...result, searchRank });
     }
   }));
 
-  return [...candidateMap.values()].sort((left, right) => candidateScore(right, parsed) - candidateScore(left, parsed));
+  return rankLocationCandidates(candidateMap.values(), parsed.raw);
+}
+
+const placeKind = (featureCode) => {
+  const code = String(featureCode || "").toUpperCase();
+  if (code === "PPLC") return "Capital";
+  if (code.startsWith("PPLA")) return "Administrative centre";
+  if (code === "AIRP") return "Airport";
+  return "Place";
+};
+
+const compactPopulation = (value) => {
+  const population = Number(value);
+  if (!Number.isFinite(population) || population <= 0) return null;
+  if (population >= 1000000) return `${(population / 1000000).toFixed(population >= 10000000 ? 0 : 1)}M people`;
+  if (population >= 1000) return `${Math.round(population / 1000)}k people`;
+  return `${population} people`;
+};
+
+export function buildLocationSuggestion(result) {
+  const contextParts = [result.admin1 || result.admin2, result.country]
+    .filter(Boolean)
+    .filter((value, index, values) => values.findIndex((candidate) => normalize(candidate) === normalize(value)) === index);
+  return {
+    value: buildLocationLabel(result),
+    name: result.name,
+    context: contextParts.join(", "),
+    meta: [placeKind(result.feature_code), compactPopulation(result.population)].filter(Boolean).join(" · "),
+    countryCode: String(result.country_code || "").toUpperCase()
+  };
+}
+
+export async function suggestLocationOptions(query, signal) {
+  if (String(query).trim().length < 2) return [];
+  const candidates = await geocodeCandidates(query, 12, signal);
+  const unique = new Map();
+  for (const candidate of candidates) {
+    const suggestion = buildLocationSuggestion(candidate);
+    if (!unique.has(suggestion.value)) unique.set(suggestion.value, suggestion);
+  }
+  return [...unique.values()].slice(0, 7);
 }
 
 export async function suggestLocations(query, signal) {
-  if (String(query).trim().length < 2) return [];
-  const candidates = await geocodeCandidates(query, 8, signal);
-  return [...new Set(candidates.map(buildLocationLabel))].slice(0, 6);
+  return (await suggestLocationOptions(query, signal)).map((suggestion) => suggestion.value);
 }
 
 export async function geocodeLocation(query, signal) {
@@ -119,7 +196,8 @@ export async function geocodeLocation(query, signal) {
     label: buildLocationLabel(match),
     latitude: match.latitude,
     longitude: match.longitude,
-    timezone: match.timezone || "auto"
+    timezone: match.timezone || "auto",
+    countryCode: String(match.country_code || "").toUpperCase()
   };
 }
 
@@ -229,17 +307,65 @@ function airUrl(resolved, range) {
   return url;
 }
 
+function temperatureRangeUrl(resolved, range, granularity) {
+  const base = globalThis.location?.origin || "http://127.0.0.1";
+  const url = new URL(ENDPOINTS.temperatureRange, base);
+  url.searchParams.set("latitude", resolved.latitude);
+  url.searchParams.set("longitude", resolved.longitude);
+  url.searchParams.set("countryCode", resolved.countryCode);
+  url.searchParams.set("timezone", resolved.timezone);
+  url.searchParams.set("startDate", range.startDate);
+  url.searchParams.set("endDate", range.endDate);
+  url.searchParams.set("granularity", granularity);
+  return url;
+}
+
+export function localTemperatureApiFallbackUrls(primaryUrl, origin = globalThis.location?.origin) {
+  if (!origin) return [];
+  const localOrigin = new URL(origin);
+  if (!/^(localhost|127\.0\.0\.1)$/.test(localOrigin.hostname)) return [];
+  return [4173, 4174, 4175, 4176, 4177]
+    .filter((port) => String(port) !== localOrigin.port)
+    .map((port) => {
+      const alternate = new URL(primaryUrl.pathname + primaryUrl.search, `${localOrigin.protocol}//${localOrigin.hostname}:${port}`);
+      return alternate;
+    });
+}
+
+async function fetchTemperatureRange(url, signal) {
+  try {
+    return await fetchJson(url, signal);
+  } catch (primaryError) {
+    if (primaryError?.name === "AbortError") throw primaryError;
+    for (const alternateUrl of localTemperatureApiFallbackUrls(url)) {
+      try {
+        return await fetchJson(alternateUrl, signal);
+      } catch (alternateError) {
+        if (alternateError?.name === "AbortError") throw alternateError;
+      }
+    }
+    throw primaryError;
+  }
+}
+
 export async function fetchLocationData(query, settings, signal) {
   const resolved = await geocodeLocation(query, signal);
   const ranges = splitTimeline(settings);
   const segments = await Promise.all(ranges.map(async (range) => {
-    const [weatherResult, airResult] = await Promise.allSettled([
+    const useNationalTemperature = range.kind === "historical" && NATIONAL_TEMPERATURE_COUNTRIES.includes(resolved.countryCode);
+    const [weatherResult, airResult, temperatureResult] = await Promise.allSettled([
       fetchJson(weatherUrl(resolved, range), signal),
-      fetchJson(airUrl(resolved, range), signal)
+      fetchJson(airUrl(resolved, range), signal),
+      useNationalTemperature
+        ? fetchTemperatureRange(temperatureRangeUrl(resolved, range, settings.granularity), signal)
+        : Promise.resolve({ source: null, observations: [], notices: [] })
     ]);
     if (weatherResult.status === "rejected") throw weatherResult.reason;
     const weather = weatherResult.value;
     const air = airResult.status === "fulfilled" ? airResult.value : { hourly: {} };
+    const temperatureRange = temperatureResult.status === "fulfilled"
+      ? temperatureResult.value
+      : { source: null, observations: [], notices: ["National temperature observations unavailable; using Open-Meteo fallback"] };
     const [weatherSource, airSource] = await Promise.all([
       reverseGeocodeSource(weather.latitude, weather.longitude, signal),
       airResult.status === "fulfilled"
@@ -252,11 +378,21 @@ export async function fetchLocationData(query, settings, signal) {
       air,
       settings.granularity,
       { weather: weatherSource, air: airSource },
-      range
+      range,
+      temperatureRange
     );
+    const temperatureRows = data.rows.filter((row) => Number.isFinite(row.temperatureAvg));
+    const stationRows = temperatureRows.filter((row) => row.temperatureSourceKind === "national-station");
+    const coverageNotice = temperatureRange.source && stationRows.length < temperatureRows.length
+      ? `${temperatureRange.source.name} supplied station ranges for ${stationRows.length} of ${temperatureRows.length} temperature buckets; the remainder use Open-Meteo`
+      : null;
     return {
       data,
-      notices: airResult.status === "rejected" ? [`${range.kind} air-quality data unavailable`] : []
+      notices: [
+        ...(airResult.status === "rejected" ? [`${range.kind} air-quality data unavailable`] : []),
+        ...(temperatureRange.notices || []),
+        ...[coverageNotice].filter(Boolean)
+      ]
     };
   }));
 
@@ -268,6 +404,7 @@ export async function fetchLocationData(query, settings, signal) {
     hasForecast: rows.some((row) => row.dataKind === "forecast"),
     weatherSource: segments.map((segment) => segment.data.weatherSource).find(Boolean) || null,
     airSource: segments.map((segment) => segment.data.airSource).find(Boolean) || null,
-    dataNotices: segments.flatMap((segment) => segment.notices)
+    temperatureSource: segments.map((segment) => segment.data.temperatureSource).find(Boolean) || null,
+    dataNotices: [...new Set(segments.flatMap((segment) => segment.notices))]
   };
 }

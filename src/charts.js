@@ -101,6 +101,9 @@ function tooltipText(location, row, metric) {
     ? `Forecast · ${row.forecastConfidence || "unknown"} confidence (lead-time guide) · `
     : "Historical · ";
   if (metric.type === "range") {
+    if (!Number.isFinite(row[metric.minKey]) || !Number.isFinite(row[metric.maxKey])) {
+      return `${location.label} · ${row.label} · ${forecastContext}Sample ${formatNumber(row[metric.id], metric.digits)} ${metric.unit} · range unavailable`;
+    }
     return `${location.label} · ${row.label} · ${forecastContext}Min ${formatNumber(row[metric.minKey], metric.digits)} ${metric.unit} · Avg ${formatNumber(row[metric.id], metric.digits)} ${metric.unit} · Max ${formatNumber(row[metric.maxKey], metric.digits)} ${metric.unit}`;
   }
   return `${location.label} · ${row.label} · ${forecastContext}${formatNumber(row[metric.id], metric.digits)} ${metric.unit}`;
@@ -178,6 +181,45 @@ function renderThresholdLegend(metric) {
   return legend;
 }
 
+export function chartTickParts(key) {
+  const [isoDate, time] = key.split("T");
+  const [year, month, day] = isoDate.split("-");
+  return { date: `${day}/${month}/${year}`, time: time?.slice(0, 5) || null };
+}
+
+function pointSpacingForKeys(keys) {
+  if (keys.length < 2 || !keys[0].includes("T") || !keys[1].includes("T")) return 86;
+  const intervalMinutes = Math.abs(Date.parse(keys[1]) - Date.parse(keys[0])) / 60000;
+  if (intervalMinutes <= 60) return 30;
+  if (intervalMinutes <= 180) return 54;
+  if (intervalMinutes <= 360) return 64;
+  return 86;
+}
+
+function tickStrideForKeys(keys) {
+  if (keys.length < 2 || !keys[0].includes("T") || !keys[1].includes("T")) return 1;
+  const intervalMinutes = Math.abs(Date.parse(keys[1]) - Date.parse(keys[0])) / 60000;
+  return intervalMinutes <= 60 ? 3 : 1;
+}
+
+function renderYAxis(scale, yFor, margin, height) {
+  const axis = svgNode("svg", {
+    class: "chart-y-axis",
+    viewBox: `0 0 ${margin.left + 1} ${height}`,
+    width: margin.left + 1,
+    height,
+    "aria-hidden": "true"
+  });
+  axis.append(svgNode("rect", { x: 0, y: 0, width: margin.left, height, fill: "#fff" }));
+  for (const tick of scale.ticks) {
+    const label = svgNode("text", { x: margin.left - 10, y: yFor(tick) + 4, "text-anchor": "end", class: "axis-label" });
+    label.textContent = formatNumber(tick, scale.tickDigits);
+    axis.append(label);
+  }
+  axis.append(svgNode("line", { x1: margin.left, x2: margin.left, y1: margin.top, y2: height - margin.bottom, stroke: "#d7d7d7" }));
+  return axis;
+}
+
 export function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 } = {}) {
   container.replaceChildren();
   const frame = create("div", "chart-frame");
@@ -194,15 +236,16 @@ export function renderChartFrame(container, metric, series, highlightIndex, { zo
     return frame;
   }
 
-  const baseWidth = Math.max(680, 110 + keys.length * 82);
+  const baseWidth = Math.max(680, 88 + keys.length * pointSpacingForKeys(keys));
   const width = Math.round(baseWidth * zoom);
-  const height = Math.round(300 * zoom);
-  const margin = { top: 20 * zoom, right: 26 * zoom, bottom: 74 * zoom, left: 62 * zoom };
+  const height = Math.round(310 * zoom);
+  const margin = { top: 20 * zoom, right: 26 * zoom, bottom: 64 * zoom, left: 62 * zoom };
   const plotWidth = width - margin.left - margin.right;
   const plotHeight = height - margin.top - margin.bottom;
   const scale = chartScale(metric, series);
   const yFor = (value) => margin.top + (scale.max - value) / (scale.max - scale.min) * plotHeight;
-  const xFor = (index) => margin.left + (keys.length === 1 ? plotWidth / 2 : index / (keys.length - 1) * plotWidth);
+  const edgeInset = Math.min(40 * zoom, plotWidth / 4);
+  const xFor = (index) => margin.left + (keys.length === 1 ? plotWidth / 2 : edgeInset + index / (keys.length - 1) * (plotWidth - edgeInset * 2));
   const allRows = series.flatMap((location) => location.rows);
   const rowForKey = new Map(keys.map((key) => [key, allRows.find((row) => row.key === key)]));
   const forecastIndex = keys.findIndex((key) => rowForKey.get(key)?.dataKind === "forecast");
@@ -225,15 +268,27 @@ export function renderChartFrame(container, metric, series, highlightIndex, { zo
   for (const tick of scale.ticks) {
     const y = yFor(tick);
     svg.append(svgNode("line", { x1: margin.left, x2: width - margin.right, y1: y, y2: y, stroke: "#d7d7d7", "stroke-width": 1 }));
-    const label = svgNode("text", { x: margin.left - 10, y: y + 4, "text-anchor": "end", class: "axis-label" });
-    label.textContent = formatNumber(tick, scale.tickDigits);
-    svg.append(label);
   }
+  const tickStride = tickStrideForKeys(keys);
   keys.forEach((key, index) => {
-    const label = svgNode("text", { x: xFor(index), y: height - margin.bottom + 24, transform: `rotate(-35 ${xFor(index)} ${height - margin.bottom + 24})`, "text-anchor": "end", class: "axis-label" });
+    const parts = chartTickParts(key);
+    const isFirstBucketOfDay = index === 0 || key.slice(0, 10) !== keys[index - 1].slice(0, 10);
+    if (!isFirstBucketOfDay && index % tickStride !== 0) return;
+    const label = svgNode("text", { x: xFor(index), y: height - margin.bottom + 20, "text-anchor": "middle", class: "axis-label chart-x-label" });
     const row = rowForKey.get(key);
     if (row?.dataKind === "forecast") label.classList.add("forecast-date-label");
-    label.textContent = row?.label || key;
+    if (parts.time) {
+      const timeLine = svgNode("tspan", { x: xFor(index), dy: 0, class: "axis-time-label" });
+      timeLine.textContent = parts.time;
+      label.append(timeLine);
+      if (isFirstBucketOfDay) {
+        const dateLine = svgNode("tspan", { x: xFor(index), dy: 15, class: "axis-date-label" });
+        dateLine.textContent = parts.date;
+        label.append(dateLine);
+      }
+    } else {
+      label.textContent = parts.date;
+    }
     svg.append(label);
   });
 
@@ -304,7 +359,14 @@ export function renderChartFrame(container, metric, series, highlightIndex, { zo
     });
   }
 
+  scroll.tabIndex = 0;
+  scroll.setAttribute("aria-label", `Scrollable ${metric.title} chart. The value axis remains visible while scrolling horizontally.`);
   scroll.append(svg);
+  const yAxis = renderYAxis(scale, yFor, margin, height);
+  frame.insertBefore(yAxis, tooltip);
+  scroll.addEventListener("scroll", () => {
+    yAxis.style.transform = `translateY(${-scroll.scrollTop}px)`;
+  }, { passive: true });
   return frame;
 }
 
@@ -439,13 +501,14 @@ function renderTable(group, series, useGradient) {
 }
 
 function renderGroup(group, series, settings, onPopout) {
+  const displayGroup = group;
   const article = create("article", "panel metric-panel");
   const intro = create("div", "panel-intro");
   const titleWrap = create("div");
-  titleWrap.append(create("p", "eyebrow", group.eyebrow), create("h2", null, group.title));
-  intro.append(titleWrap, create("p", "description", group.description));
+  titleWrap.append(create("p", "eyebrow", displayGroup.eyebrow), create("h2", null, displayGroup.title));
+  intro.append(titleWrap, create("p", "description", displayGroup.description));
   article.append(intro);
-  if (group.id === "air" && settings.view === "graph") {
+  if (displayGroup.id === "air" && settings.view === "graph") {
     const note = create("p", "method-note");
     note.innerHTML = 'Threshold guides follow the <a href="https://airindex.eea.europa.eu/AQI/index.html" target="_blank" rel="noreferrer">EEA European AQI methodology</a>.';
     article.append(note);
@@ -453,9 +516,9 @@ function renderGroup(group, series, settings, onPopout) {
   if (!series.length) {
     article.append(create("p", "empty-state", "Load at least one visible location to populate this panel."));
   } else if (settings.view === "table") {
-    article.append(renderTable(group, series, settings.tableGradient));
+    article.append(renderTable(displayGroup, series, settings.tableGradient));
   } else {
-    const metrics = group.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
+    const metrics = displayGroup.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
     const grid = create("div", `chart-grid ${metrics.length === 1 ? "single" : ""}`);
     metrics.forEach((metric) => grid.append(renderChartCard(metric, series, settings.highlightLocation, onPopout)));
     article.append(grid);
