@@ -21,7 +21,7 @@ test("Météo-France fallback names both supported credential modes", async () =
   assert.match(payload.notices[0], /METEOFRANCE_API_KEY/);
 });
 
-test("Météo-France uses the climatology station directory for the resolved department", async () => {
+test("Météo-France uses official hourly extrema from the resolved department", async () => {
   const originalFetch = globalThis.fetch;
   const urls = [];
   globalThis.fetch = async (input) => {
@@ -33,14 +33,14 @@ test("Météo-France uses the climatology station directory for the resolved dep
     if (url.startsWith("https://geo.api.gouv.fr/communes?")) {
       return Response.json([{ codeDepartement: "35" }]);
     }
-    if (url.includes("/DPClim/v1/liste-stations/infrahoraire-6m")) {
+    if (url.includes("/DPClim/v1/liste-stations/horaire")) {
       return Response.json([{ id: 35281001, nom: "RENNES-ST JACQUES", lat: 48.0688, lon: -1.734 }]);
     }
-    if (url.includes("/DPClim/v1/commande-station/infrahoraire-6m")) {
+    if (url.includes("/DPClim/v1/commande-station/horaire")) {
       return Response.json({ elaboreProduitAvecDemandeResponse: { return: "order-1" } }, { status: 202 });
     }
     if (url.includes("/DPClim/v1/commande/fichier")) {
-      return new Response("DATE;T\n20260830000000;288.15\n20260830000600;289.15\n");
+      return new Response("NUM_POSTE;AAAAMMJJHH;T;TN;TX\n35281001;2026083000;15.2;14.6;15.8\n35281001;2026083001;15.7;15.0;16.3\n");
     }
     throw new Error(`Unexpected URL ${url}`);
   };
@@ -52,10 +52,19 @@ test("Météo-France uses the climatology station directory for the resolved dep
     const payload = await response.json();
     assert.equal(payload.source.name, "Météo-France");
     assert.equal(payload.source.stationName, "RENNES-ST JACQUES");
+    assert.equal(payload.source.rangeMethod, "official hourly extrema");
     assert.equal(payload.observations.length, 2);
+    assert.deepEqual(payload.observations[0], {
+      time: "2026-08-30T01:59:59",
+      avg: 15.2,
+      min: 14.6,
+      max: 15.8,
+      sampleCount: 1,
+      explicitRange: true
+    });
     assert.ok(urls.some((url) => url.includes("id-departement=35")));
     assert.ok(urls.some((url) => url.includes("parametre=temperature")));
-    const orderUrl = new URL(urls.find((url) => url.includes("/commande-station/infrahoraire-6m")));
+    const orderUrl = new URL(urls.find((url) => url.includes("/commande-station/horaire")));
     assert.equal(orderUrl.searchParams.get("date-deb-periode"), "2026-08-29T10:00:00Z");
     assert.equal(orderUrl.searchParams.get("date-fin-periode"), "2026-08-31T14:00:00Z");
     assert.ok(urls.every((url) => !url.includes("/DPObs/")));
