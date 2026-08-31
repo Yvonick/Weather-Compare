@@ -82,6 +82,45 @@ test("Météo-France uses official hourly extrema from the resolved department",
   }
 });
 
+test("U.S. locations use nearby five-minute ASOS observations", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.startsWith("https://aviationweather.gov/api/data/stationinfo?")) {
+      return Response.json([
+        {
+          icaoId: "KJFK", iataId: "JFK", site: "New York/JF Kennedy Intl",
+          lat: 40.6398, lon: -73.7789, country: "US", siteType: ["METAR", "TAF"]
+        }
+      ]);
+    }
+    if (url.startsWith("https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py?")) {
+      return new Response([
+        "station,valid,lon,lat,tmpf",
+        "JFK,2026-08-29 04:05,-73.7789,40.6398,68.0",
+        "JFK,2026-08-29 04:10,-73.7789,40.6398,69.8",
+        "JFK,2026-08-29 04:15,-73.7789,40.6398,71.6"
+      ].join("\n"));
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  };
+
+  try {
+    const response = await handleTemperatureRequest(new Request(
+      "https://weather.test/api/temperature-range?countryCode=US&latitude=40.7128&longitude=-74.0060&timezone=America%2FNew_York&startDate=2026-08-29&endDate=2026-08-29&granularity=1h"
+    ));
+    const payload = await response.json();
+    assert.equal(payload.source.name, "IEM / NOAA ASOS");
+    assert.match(payload.source.stationName, /KJFK/);
+    assert.equal(payload.source.cadenceMinutes, 5);
+    assert.equal(payload.observations.length, 3);
+    assert.equal(payload.observations[0].time, "2026-08-29T00:05:00");
+    assert.equal(payload.observations[0].avg, 20);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("unsupported countries retain the normalized empty-provider contract", async () => {
   const response = await handleTemperatureRequest(new Request(requestUrl("ES")));
   const payload = await response.json();

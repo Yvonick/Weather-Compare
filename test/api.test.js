@@ -50,14 +50,22 @@ test("population outweighs minor administrative status for namesakes", () => {
   assert.equal(ranked[0].country_code, "CA");
 });
 
-test("autocomplete suggestions separate primary place, context, and importance metadata", () => {
+test("globally prominent prefix matches outrank smaller capitals", () => {
+  const ranked = rankLocationCandidates([
+    { name: "New Delhi", country: "India", country_code: "IN", feature_code: "PPLC", population: 318000, searchRank: 0 },
+    { name: "New York", country: "United States", country_code: "US", feature_code: "PPL", population: 8804190, searchRank: 5 }
+  ], "new");
+  assert.equal(ranked[0].name, "New York");
+});
+
+test("autocomplete suggestions separate primary place, context, and place type without population", () => {
   const suggestion = buildLocationSuggestion({
     name: "Frankfurt am Main", admin1: "Hesse", admin2: "Regierungsbezirk Darmstadt",
     country: "Germany", country_code: "DE", feature_code: "PPLA3", population: 650000
   });
   assert.equal(suggestion.name, "Frankfurt am Main");
   assert.equal(suggestion.context, "Hesse, Germany");
-  assert.equal(suggestion.meta, "Administrative centre · 650k people");
+  assert.equal(suggestion.meta, "Administrative centre");
   assert.equal(suggestion.countryCode, "DE");
 });
 

@@ -23,16 +23,16 @@ export function buildLocationLabel(result) {
 }
 
 const FEATURE_IMPORTANCE = Object.freeze({
-  PPLC: 170,
-  PPLA: 110,
-  PPLA2: 35,
-  PPLA3: 55,
-  PPLA4: 35,
-  PPL: 22,
-  PPLG: 18,
-  PPLL: -35,
-  PPLX: -20,
-  AIRP: -15
+  PPLC: 40,
+  PPLA: 30,
+  PPLA2: 22,
+  PPLA3: 18,
+  PPLA4: 12,
+  PPL: 16,
+  PPLG: 12,
+  PPLL: -25,
+  PPLX: -15,
+  AIRP: -10
 });
 
 function candidateScore(result, parsed) {
@@ -46,10 +46,10 @@ function candidateScore(result, parsed) {
   const countryHint = normalize(parsed.parts.at(-1));
   const population = Number(result.population);
 
-  let score = name === primary ? 220 : name.startsWith(primary) ? 180 : name.includes(primary) ? 145 : 0;
-  if (label === raw) score += 150;
-  else if (raw && label.startsWith(raw)) score += 90;
-  else if (raw && label.includes(raw)) score += 70;
+  let score = name === primary ? 400 : name.startsWith(primary) ? 260 : name.includes(primary) ? 170 : 0;
+  if (label === raw) score += 60;
+  else if (raw && label.startsWith(raw)) score += 40;
+  else if (raw && label.includes(raw)) score += 25;
   parsed.parts.map(normalize).forEach((part, index) => {
     if (!part) return;
     const matchesCountry = index > 0 && (part === country || part === countryCode);
@@ -59,9 +59,9 @@ function candidateScore(result, parsed) {
   if (parsed.parts.length > 1 && countryHint && (countryHint === country || countryHint === countryCode)) score += 55;
   score += FEATURE_IMPORTANCE[featureCode] || 0;
   score += Number.isFinite(population) && population > 0
-    ? Math.min(155, Math.log10(population + 1) * 22)
+    ? Math.min(240, Math.log10(population + 1) * 32)
     : -12;
-  if (Number.isFinite(result.searchRank)) score += Math.max(0, 90 - result.searchRank * 9);
+  if (Number.isFinite(result.searchRank)) score += Math.max(0, 24 - result.searchRank * 2);
   return score;
 }
 
@@ -152,14 +152,6 @@ const placeKind = (featureCode) => {
   return "Place";
 };
 
-const compactPopulation = (value) => {
-  const population = Number(value);
-  if (!Number.isFinite(population) || population <= 0) return null;
-  if (population >= 1000000) return `${(population / 1000000).toFixed(population >= 10000000 ? 0 : 1)}M people`;
-  if (population >= 1000) return `${Math.round(population / 1000)}k people`;
-  return `${population} people`;
-};
-
 export function buildLocationSuggestion(result) {
   const contextParts = [result.admin1 || result.admin2, result.country]
     .filter(Boolean)
@@ -168,14 +160,14 @@ export function buildLocationSuggestion(result) {
     value: buildLocationLabel(result),
     name: result.name,
     context: contextParts.join(", "),
-    meta: [placeKind(result.feature_code), compactPopulation(result.population)].filter(Boolean).join(" · "),
+    meta: placeKind(result.feature_code),
     countryCode: String(result.country_code || "").toUpperCase()
   };
 }
 
 export async function suggestLocationOptions(query, signal) {
   if (String(query).trim().length < 2) return [];
-  const candidates = await geocodeCandidates(query, 12, signal);
+  const candidates = await geocodeCandidates(query, 30, signal);
   const unique = new Map();
   for (const candidate of candidates) {
     const suggestion = buildLocationSuggestion(candidate);
@@ -201,43 +193,11 @@ export async function geocodeLocation(query, signal) {
   };
 }
 
-const radians = (degrees) => degrees * Math.PI / 180;
-function distanceKm(left, right) {
-  const earthRadius = 6371;
-  const latitudeDelta = radians(right.latitude - left.latitude);
-  const longitudeDelta = radians(right.longitude - left.longitude);
-  const value = Math.sin(latitudeDelta / 2) ** 2
-    + Math.cos(radians(left.latitude)) * Math.cos(radians(right.latitude)) * Math.sin(longitudeDelta / 2) ** 2;
-  return earthRadius * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
-}
-
-function sourceCandidateScore(candidate, point) {
-  const distance = distanceKm(candidate, point);
-  const feature = normalize([candidate.feature_code, candidate.feature_class].filter(Boolean).join(" "));
-  const name = normalize(candidate.name);
-  const stationBonus = /(airport|aerodrome|station|observatory)/.test(`${feature} ${name}`) ? 18 : 0;
-  return stationBonus - Math.min(distance, 100) * 0.45 + (Number.isFinite(candidate.population) ? Math.min(4, Math.log10(candidate.population + 1)) : 0);
-}
-
-async function reverseGeocodeSource(latitude, longitude, signal) {
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
-  try {
-    const url = new URL(ENDPOINTS.reverseGeocode);
-    url.searchParams.set("latitude", String(latitude));
-    url.searchParams.set("longitude", String(longitude));
-    url.searchParams.set("count", "24");
-    url.searchParams.set("language", "en");
-    url.searchParams.set("format", "json");
-    const results = (await fetchJson(url, signal)).results || [];
-    const point = { latitude, longitude };
-    const best = results
-      .filter((item) => Number.isFinite(item.latitude) && Number.isFinite(item.longitude))
-      .sort((left, right) => sourceCandidateScore(right, point) - sourceCandidateScore(left, point))[0];
-    return best ? buildLocationLabel(best) : `${latitude.toFixed(3)}, ${longitude.toFixed(3)}`;
-  } catch {
-    return `${latitude.toFixed(3)}, ${longitude.toFixed(3)}`;
-  }
-}
+const sourceGridLabel = (latitude, longitude) => (
+  Number.isFinite(latitude) && Number.isFinite(longitude)
+    ? `${Number(latitude).toFixed(3)}, ${Number(longitude).toFixed(3)}`
+    : null
+);
 
 const formatLocalDate = (date) => {
   const year = date.getFullYear();
@@ -366,12 +326,12 @@ export async function fetchLocationData(query, settings, signal) {
     const temperatureRange = temperatureResult.status === "fulfilled"
       ? temperatureResult.value
       : { source: null, observations: [], notices: ["National temperature observations unavailable; using Open-Meteo fallback"] };
-    const [weatherSource, airSource] = await Promise.all([
-      reverseGeocodeSource(weather.latitude, weather.longitude, signal),
-      airResult.status === "fulfilled"
-        ? reverseGeocodeSource(air.latitude, air.longitude, signal)
-        : Promise.resolve(null)
-    ]);
+    // Open-Meteo already reports the exact grid coordinates it used. Showing
+    // those coordinates avoids two extra reverse-geocoding calls per segment.
+    const weatherSource = sourceGridLabel(weather.latitude, weather.longitude);
+    const airSource = airResult.status === "fulfilled"
+      ? sourceGridLabel(air.latitude, air.longitude)
+      : null;
     const data = aggregateLocationData(
       resolved,
       weather,
@@ -384,7 +344,7 @@ export async function fetchLocationData(query, settings, signal) {
     const temperatureRows = data.rows.filter((row) => Number.isFinite(row.temperatureAvg));
     const stationRows = temperatureRows.filter((row) => row.temperatureSourceKind === "national-station");
     const coverageNotice = temperatureRange.source && stationRows.length < temperatureRows.length
-      ? `${temperatureRange.source.name} supplied station ranges for ${stationRows.length} of ${temperatureRows.length} temperature buckets; the remainder use Open-Meteo`
+      ? `${temperatureRange.source.name} supplied station ranges for ${stationRows.length} of ${temperatureRows.length} temperature buckets; the remainder use Open-Meteo. Recent and in-progress hours can be delayed or incomplete at the station source`
       : null;
     return {
       data,

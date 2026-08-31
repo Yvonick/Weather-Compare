@@ -14,7 +14,7 @@ You can also open `index.html` directly, but the local server is required for na
 
 ## Temperature range sources
 
-Public adapters need no credentials: UK Met Office, DMI Denmark, DWD Germany, MeteoSwiss, GeoSphere Austria, and FMI Finland. MET Norway Frost, Météo-France, and KNMI require free provider credentials. Configure those as environment variables before starting the server:
+Public adapters need no credentials: UK Met Office, DMI Denmark, DWD Germany, MeteoSwiss, GeoSphere Austria, FMI Finland, and U.S. ASOS observations distributed by Iowa Environmental Mesonet from NOAA/NCEI and MADIS feeds. MET Norway Frost, Météo-France, and KNMI require free provider credentials. Configure those as environment variables before starting the server:
 
 ```bash
 export FROST_CLIENT_ID="..."
@@ -25,7 +25,7 @@ npm start
 
 For Météo-France, subscribe the application to the Climatological Data API. The server exchanges `METEOFRANCE_APPLICATION_ID` for short-lived OAuth2 tokens automatically, uses the official French geographic API and climatology catalog to select nearby stations, then reads the quality-controlled hourly `T`, `TN`, and `TX` fields through data.gouv.fr's public tabular API. DPClim remains a fallback. The six-minute historical product is precipitation-only. `METEOFRANCE_API_KEY` remains available for a manually generated API key, but that key normally expires and is less suitable for a deployed app.
 
-See `.env.example` for the variable names. Credentials stay on the server; the browser only calls the same-origin `/api/temperature-range` endpoint. If a provider is unconfigured, unavailable, outside its recent-data window, or has no nearby station, affected buckets remain populated from Open-Meteo and the UI explains the fallback. The free Met Office one-minute feed is a rolling seven-day dataset, so older UK periods use Open-Meteo unless a separate archival integration is configured.
+See `.env.example` for the variable names. Credentials stay on the server; the browser only calls the same-origin `/api/temperature-range` endpoint. If a provider is unconfigured, unavailable, outside its recent-data window, or has no nearby station, affected buckets remain populated from Open-Meteo and the UI explains the fallback. The free Met Office one-minute feed is a rolling seven-day dataset, so older UK periods use Open-Meteo unless a separate archival integration is configured. U.S. five-minute reports are near-real-time when MADIS HFMETAR observations exist, while the separate quality-controlled NCEI one-minute archive is commonly delayed by about 24 hours; incomplete buckets are therefore never promoted to ranges.
 
 ## Test
 

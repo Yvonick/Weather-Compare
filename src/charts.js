@@ -101,10 +101,13 @@ function tooltipText(location, row, metric) {
     ? `Forecast · ${row.forecastConfidence || "unknown"} confidence (lead-time guide) · `
     : "Historical · ";
   if (metric.type === "range") {
+    const sourceContext = row.temperatureStationName
+      ? ` · Station: ${row.temperatureStationName}${Number.isFinite(row.temperatureStationDistanceKm) ? ` (${formatNumber(row.temperatureStationDistanceKm, 1)} km)` : ""}`
+      : " · Source: Open-Meteo grid (no station range)";
     if (!Number.isFinite(row[metric.minKey]) || !Number.isFinite(row[metric.maxKey])) {
-      return `${location.label} · ${row.label} · ${forecastContext}Sample ${formatNumber(row[metric.id], metric.digits)} ${metric.unit} · range unavailable`;
+      return `${location.label} · ${row.label} · ${forecastContext}Sample ${formatNumber(row[metric.id], metric.digits)} ${metric.unit} · range unavailable${sourceContext}`;
     }
-    return `${location.label} · ${row.label} · ${forecastContext}Min ${formatNumber(row[metric.minKey], metric.digits)} ${metric.unit} · Avg ${formatNumber(row[metric.id], metric.digits)} ${metric.unit} · Max ${formatNumber(row[metric.maxKey], metric.digits)} ${metric.unit}`;
+    return `${location.label} · ${row.label} · ${forecastContext}Min ${formatNumber(row[metric.minKey], metric.digits)} ${metric.unit} · Avg ${formatNumber(row[metric.id], metric.digits)} ${metric.unit} · Max ${formatNumber(row[metric.maxKey], metric.digits)} ${metric.unit}${sourceContext}`;
   }
   return `${location.label} · ${row.label} · ${forecastContext}${formatNumber(row[metric.id], metric.digits)} ${metric.unit}`;
 }
@@ -420,7 +423,8 @@ export function buildTableModel(group, series) {
     metric,
     metricIndex,
     heatDomain: heatDomains[metric.heatGroup || metric.key] || null,
-    values: keys.map((key) => rowsByLocation[locationIndex].get(key)?.[metric.key])
+    values: keys.map((key) => rowsByLocation[locationIndex].get(key)?.[metric.key]),
+    sourceRows: keys.map((key) => rowsByLocation[locationIndex].get(key) || null)
   })));
   return { buckets, heatDomains, metrics, rows };
 }
@@ -470,7 +474,15 @@ function renderTable(group, series, useGradient) {
     const rowNode = create("tr");
     if (tableRow.metricIndex === 0 && tableRow.locationIndex > 0) rowNode.classList.add("is-location-start");
     if (tableRow.metricIndex === 0) {
-      const locationCell = create("th", "table-location-heading", tableRow.location.label);
+      const station = group.id === "temperature" ? tableRow.location.temperatureSource : null;
+      const locationCell = create("th", "table-location-heading");
+      locationCell.append(create("strong", null, station?.stationName || tableRow.location.label));
+      if (station?.stationName) {
+        const distance = Number.isFinite(station.stationDistanceKm) ? ` · ${formatNumber(station.stationDistanceKm, 1)} km away` : "";
+        locationCell.append(create("small", "table-location-context", `${tableRow.location.label}${distance}`));
+      } else if (group.id === "temperature") {
+        locationCell.append(create("small", "table-location-context", `${tableRow.location.label} · Open-Meteo grid fallback`));
+      }
       locationCell.scope = "rowgroup";
       locationCell.rowSpan = model.metrics.length;
       rowNode.append(locationCell);
@@ -484,6 +496,12 @@ function renderTable(group, series, useGradient) {
       if (bucket.dataKind === "forecast") classes.push("forecast-table-column");
       if (bucketIndex === firstForecastIndex) classes.push("is-first-forecast-column");
       const cell = create("td", classes.join(" "), tableRow.metric.formatter === "direction" ? formatDirection(value) : formatNumber(value, tableRow.metric.digits));
+      if (group.id === "temperature") {
+        const sourceRow = tableRow.sourceRows[bucketIndex];
+        cell.title = sourceRow?.temperatureStationName
+          ? `${sourceRow.temperatureProviderName || "Station"}: ${sourceRow.temperatureStationName}`
+          : "Open-Meteo grid fallback; no station range for this bucket";
+      }
       const heatStyle = useGradient ? tableHeatStyle(value, tableRow.heatDomain) : null;
       if (heatStyle) {
         cell.classList.add("table-heat-cell");

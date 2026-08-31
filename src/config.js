@@ -5,12 +5,11 @@ export const ENDPOINTS = Object.freeze({
   weather: "https://archive-api.open-meteo.com/v1/archive",
   forecast: "https://api.open-meteo.com/v1/forecast",
   geocode: "https://geocoding-api.open-meteo.com/v1/search",
-  reverseGeocode: "https://geocoding-api.open-meteo.com/v1/reverse",
   air: "https://air-quality-api.open-meteo.com/v1/air-quality",
   temperatureRange: "/api/temperature-range"
 });
 
-export const NATIONAL_TEMPERATURE_COUNTRIES = Object.freeze(["AT", "CH", "DE", "DK", "FI", "FR", "GB", "NL", "NO"]);
+export const NATIONAL_TEMPERATURE_COUNTRIES = Object.freeze(["AT", "CH", "DE", "DK", "FI", "FR", "GB", "NL", "NO", "US"]);
 
 export const PRESETS = Object.freeze({ "7d": 7, "15d": 15, "21d": 21 });
 export const CONTINUOUS_PRESET = "7d7f";
