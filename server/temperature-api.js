@@ -380,7 +380,7 @@ async function provideDwd(request) {
   };
 }
 
-async function franceAuthHeaders(env) {
+async function franceAuth(env) {
   const applicationId = String(env.METEOFRANCE_APPLICATION_ID || "").trim();
   if (applicationId) {
     const accessToken = await cached("meteo-france-access-token", async () => {
@@ -397,10 +397,16 @@ async function franceAuthHeaders(env) {
       if (!payload.access_token) throw new Error("Météo-France did not return an OAuth2 access token");
       return payload.access_token;
     }, 3300000);
-    return { Authorization: `Bearer ${accessToken}` };
+    return { parameter: "tokenOauth2", value: accessToken };
   }
   const apiKey = String(env.METEOFRANCE_API_KEY || "").trim().replace(/^Bearer\s+/i, "");
-  return apiKey ? { Authorization: `Bearer ${apiKey}` } : null;
+  return apiKey ? { parameter: "apikey", value: apiKey } : null;
+}
+
+function franceAuthenticatedUrl(value, auth) {
+  const url = value instanceof URL ? value : new URL(value);
+  url.searchParams.set(auth.parameter, auth.value);
+  return url;
 }
 
 async function franceDepartment(request) {
@@ -416,12 +422,12 @@ async function franceDepartment(request) {
   });
 }
 
-async function franceStations(headers, department) {
+async function franceStations(auth, department) {
   return cached(`france-climate-stations-${department}`, async () => {
     const url = new URL("https://public-api.meteofrance.fr/public/DPClim/v1/liste-stations/horaire");
     url.searchParams.set("id-departement", department);
     url.searchParams.set("parametre", "temperature");
-    const stations = await asJson(url, { headers });
+    const stations = await asJson(franceAuthenticatedUrl(url, auth));
     return stations.map((row) => ({
       id: String(row.id ?? "").padStart(8, "0"),
       name: row.nom || "Météo-France station",
@@ -466,13 +472,13 @@ function franceHourlyObservations(text, request) {
   }).filter((observation) => observation?.explicitRange);
 }
 
-async function franceHourlyArchive(station, request, headers, startTime, endTime) {
+async function franceHourlyArchive(station, request, auth, startTime, endTime) {
   const orderId = await cached(`france-hourly-order-${station.id}-${startTime}-${endTime}`, async () => {
     const url = new URL("https://public-api.meteofrance.fr/public/DPClim/v1/commande-station/horaire");
     url.searchParams.set("id-station", station.id);
     url.searchParams.set("date-deb-periode", startTime);
     url.searchParams.set("date-fin-periode", endTime);
-    const order = await checkedFetch(url, { headers, signal: franceSignal() });
+    const order = await checkedFetch(franceAuthenticatedUrl(url, auth), { signal: franceSignal() });
     const orderPayload = await order.json();
     const id = orderPayload.elaboreProduitAvecDemandeResponse?.return ?? orderPayload.return ?? orderPayload.id;
     if (!id) throw new Error("Météo-France did not return an order id");
@@ -482,10 +488,9 @@ async function franceHourlyArchive(station, request, headers, startTime, endTime
   let lastDetail = "";
   let missingResponses = 0;
   for (let attempt = 0; attempt < 8; attempt += 1) {
-    const response = await fetch(
-      `https://public-api.meteofrance.fr/public/DPClim/v1/commande/fichier?id-cmde=${encodeURIComponent(orderId)}`,
-      { headers, signal: franceSignal() }
-    );
+    const fileUrl = new URL("https://public-api.meteofrance.fr/public/DPClim/v1/commande/fichier");
+    fileUrl.searchParams.set("id-cmde", orderId);
+    const response = await fetch(franceAuthenticatedUrl(fileUrl, auth), { signal: franceSignal() });
     lastStatus = response.status;
     if (response.ok && response.status !== 204) {
       const text = await response.text();
@@ -505,12 +510,12 @@ async function franceHourlyArchive(station, request, headers, startTime, endTime
 }
 
 async function provideFrance(request, env) {
-  const headers = await franceAuthHeaders(env);
-  if (!headers) return { observations: [], notice: "Météo-France needs a METEOFRANCE_APPLICATION_ID or METEOFRANCE_API_KEY; using Open-Meteo fallback" };
+  const auth = await franceAuth(env);
+  if (!auth) return { observations: [], notice: "Météo-France needs a METEOFRANCE_APPLICATION_ID or METEOFRANCE_API_KEY; using Open-Meteo fallback" };
   if (request.granularity === "30m") return { observations: [], notice: "Météo-France historical temperature extrema are hourly; using Open-Meteo fallback for 30-minute buckets" };
   const department = await franceDepartment(request);
   if (!department) return { observations: [], notice: "No French administrative department was found for this location" };
-  const stations = (await franceStations(headers, department)).filter((station) => franceStationCovers(station, request));
+  const stations = (await franceStations(auth, department)).filter((station) => franceStationCovers(station, request));
   const candidates = nearestStations(stations, request, 4).sort((left, right) => Number(right.isOpen) - Number(left.isOpen) || left.distanceKm - right.distanceKm);
   if (!candidates.length) return { observations: [], notice: "No Météo-France hourly temperature station covering this period was found within 75 km" };
   const { start, end } = utcWindow(request);
@@ -519,7 +524,7 @@ async function provideFrance(request, env) {
   let lastIssue = "no hourly extrema were returned";
   for (const station of candidates) {
     try {
-      const result = await franceHourlyArchive(station, request, headers, startTime, endTime);
+      const result = await franceHourlyArchive(station, request, auth, startTime, endTime);
       if (result.observations.length) {
         return { source: providerSource("FR", station), observations: result.observations };
       }
