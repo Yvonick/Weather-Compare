@@ -591,6 +591,7 @@ function candidateScore(result, parsed) {
   score += Number.isFinite(population) && population > 0
     ? Math.min(155, Math.log10(population + 1) * 22)
     : -12;
+  if (Number.isFinite(result.searchRank)) score += Math.max(0, 90 - result.searchRank * 9);
   return score;
 }
 
@@ -655,26 +656,66 @@ async function geocodeCandidates(query, count = 12, signal) {
   ].filter(Boolean))];
   const candidateMap = new Map();
 
-  await Promise.all(variants.map(async (variant) => {
+  await Promise.all(variants.map(async (variant, variantIndex) => {
     const url = new URL(ENDPOINTS.geocode);
     url.searchParams.set("name", variant);
     url.searchParams.set("count", String(count));
     url.searchParams.set("language", "en");
     url.searchParams.set("format", "json");
     const payload = await fetchJson(url, signal);
-    for (const result of payload.results || []) {
+    for (const [resultIndex, result] of (payload.results || []).entries()) {
       const key = [result.latitude, result.longitude, normalize(result.name), normalize(result.admin1), normalize(result.country)].join("|");
-      if (!candidateMap.has(key)) candidateMap.set(key, result);
+      const searchRank = resultIndex + variantIndex * 2;
+      const existing = candidateMap.get(key);
+      if (!existing || searchRank < existing.searchRank) candidateMap.set(key, { ...result, searchRank });
     }
   }));
 
   return rankLocationCandidates(candidateMap.values(), parsed.raw);
 }
 
-async function suggestLocations(query, signal) {
+const placeKind = (featureCode) => {
+  const code = String(featureCode || "").toUpperCase();
+  if (code === "PPLC") return "Capital";
+  if (code.startsWith("PPLA")) return "Administrative centre";
+  if (code === "AIRP") return "Airport";
+  return "Place";
+};
+
+const compactPopulation = (value) => {
+  const population = Number(value);
+  if (!Number.isFinite(population) || population <= 0) return null;
+  if (population >= 1000000) return `${(population / 1000000).toFixed(population >= 10000000 ? 0 : 1)}M people`;
+  if (population >= 1000) return `${Math.round(population / 1000)}k people`;
+  return `${population} people`;
+};
+
+function buildLocationSuggestion(result) {
+  const contextParts = [result.admin1 || result.admin2, result.country]
+    .filter(Boolean)
+    .filter((value, index, values) => values.findIndex((candidate) => normalize(candidate) === normalize(value)) === index);
+  return {
+    value: buildLocationLabel(result),
+    name: result.name,
+    context: contextParts.join(", "),
+    meta: [placeKind(result.feature_code), compactPopulation(result.population)].filter(Boolean).join(" · "),
+    countryCode: String(result.country_code || "").toUpperCase()
+  };
+}
+
+async function suggestLocationOptions(query, signal) {
   if (String(query).trim().length < 2) return [];
-  const candidates = await geocodeCandidates(query, 8, signal);
-  return [...new Set(candidates.map(buildLocationLabel))].slice(0, 6);
+  const candidates = await geocodeCandidates(query, 12, signal);
+  const unique = new Map();
+  for (const candidate of candidates) {
+    const suggestion = buildLocationSuggestion(candidate);
+    if (!unique.has(suggestion.value)) unique.set(suggestion.value, suggestion);
+  }
+  return [...unique.values()].slice(0, 7);
+}
+
+async function suggestLocations(query, signal) {
+  return (await suggestLocationOptions(query, signal)).map((suggestion) => suggestion.value);
 }
 
 async function geocodeLocation(query, signal) {
@@ -1825,7 +1866,7 @@ function renderLocationSearch() {
   popover.hidden = !locationSearch.open;
   status.textContent = locationSearch.message;
   listbox.replaceChildren();
-  locationSearch.results.forEach((value, resultIndex) => {
+  locationSearch.results.forEach((suggestion, resultIndex) => {
     const option = document.createElement("button");
     option.type = "button";
     option.id = `location-options-${index}-option-${resultIndex}`;
@@ -1834,7 +1875,14 @@ function renderLocationSearch() {
     option.setAttribute("aria-selected", String(resultIndex === locationSearch.activeIndex));
     option.dataset.suggestionIndex = resultIndex;
     option.dataset.locationIndex = index;
-    option.textContent = value;
+    option.setAttribute("aria-label", suggestion.value);
+    const primary = document.createElement("strong");
+    primary.textContent = suggestion.name;
+    const context = document.createElement("span");
+    context.textContent = suggestion.context;
+    const meta = document.createElement("small");
+    meta.textContent = suggestion.meta;
+    option.append(primary, context, meta);
     listbox.append(option);
   });
   if (locationSearch.activeIndex >= 0) {
@@ -1870,7 +1918,7 @@ function closeLocationSearch() {
 
 function selectLocationSuggestion(index, resultIndex) {
   if (locationSearch.index !== index || !locationSearch.results[resultIndex]) return;
-  const value = locationSearch.results[resultIndex];
+  const value = locationSearch.results[resultIndex].value;
   settings.locations[index] = value;
   const input = elements.locationList.querySelector(`input[data-location-index="${index}"]`);
   if (input) input.value = value;
@@ -1890,7 +1938,7 @@ function queueSuggestions(index, query) {
     activeIndex: -1,
     open: true,
     loading: trimmed.length >= 2,
-    message: trimmed.length < 2 ? "Type at least 2 characters to search." : "Searching Open-Meteo…"
+    message: trimmed.length < 2 ? "Type at least 2 characters to search." : "Searching places…"
   };
   renderLocationSearch();
   if (trimmed.length < 2) {
@@ -1899,7 +1947,7 @@ function queueSuggestions(index, query) {
   suggestionTimer = setTimeout(async () => {
     suggestionRequest = new AbortController();
     try {
-      const results = await suggestLocations(query, suggestionRequest.signal);
+      const results = await suggestLocationOptions(query, suggestionRequest.signal);
       if (locationSearch.index !== index || locationSearch.query !== query) return;
       locationSearch = {
         ...locationSearch,

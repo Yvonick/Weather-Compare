@@ -193,7 +193,7 @@ async function provideUk(request) {
     observations: [],
     notice: relevant.length
       ? "No reporting Met Office station was found within 75 km for this period"
-      : "Met Office one-minute data is only available in its recent rolling public feed"
+      : "Met Office one-minute data is only available in its rolling 7-day public feed"
   };
   const texts = [];
   for (let index = 0; index < relevant.length; index += 12) {
@@ -219,7 +219,7 @@ async function provideUk(request) {
   return {
     source: providerSource("GB", station),
     observations,
-    notice: observations.length ? null : "Met Office one-minute data is only available in its recent rolling public feed"
+    notice: observations.length ? null : "Met Office one-minute data is only available in its rolling 7-day public feed"
   };
 }
 
@@ -371,9 +371,32 @@ async function provideDwd(request) {
   };
 }
 
-async function franceStations(apiKey) {
+async function franceAuthHeaders(env) {
+  const applicationId = String(env.METEOFRANCE_APPLICATION_ID || "").trim();
+  if (applicationId) {
+    const accessToken = await cached("meteo-france-access-token", async () => {
+      const credential = applicationId.replace(/^Basic\s+/i, "");
+      const response = await checkedFetch("https://portail-api.meteofrance.fr/token", {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${credential}`,
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: "grant_type=client_credentials"
+      });
+      const payload = await response.json();
+      if (!payload.access_token) throw new Error("Météo-France did not return an OAuth2 access token");
+      return payload.access_token;
+    }, 3300000);
+    return { Authorization: `Bearer ${accessToken}` };
+  }
+  const apiKey = String(env.METEOFRANCE_API_KEY || "").trim().replace(/^Bearer\s+/i, "");
+  return apiKey ? { Authorization: `Bearer ${apiKey}` } : null;
+}
+
+async function franceStations(headers) {
   return cached("france-stations", async () => {
-    const text = await asText("https://public-api.meteofrance.fr/public/DPObs/liste-stations", { headers: { apikey: apiKey } });
+    const text = await asText("https://public-api.meteofrance.fr/public/DPObs/liste-stations", { headers });
     return parseDelimited(text).map((row) => ({
       id: column(row, ["id_station", "idstation", "numer_sta", "id"]),
       name: column(row, ["nom_usuel", "nom", "name"]) || "Météo-France station",
@@ -384,11 +407,10 @@ async function franceStations(apiKey) {
 }
 
 async function provideFrance(request, env) {
-  const apiKey = env.METEOFRANCE_API_KEY;
-  if (!apiKey) return { observations: [], notice: "Météo-France needs a METEOFRANCE_API_KEY; using Open-Meteo fallback" };
-  const station = nearestStation(await franceStations(apiKey), request);
+  const headers = await franceAuthHeaders(env);
+  if (!headers) return { observations: [], notice: "Météo-France needs a METEOFRANCE_APPLICATION_ID or METEOFRANCE_API_KEY; using Open-Meteo fallback" };
+  const station = nearestStation(await franceStations(headers), request);
   if (!station) return { observations: [], notice: "No Météo-France station was found within 75 km" };
-  const headers = { apikey: apiKey };
   const url = new URL("https://public-api.meteofrance.fr/public/DPClim/v1/commande-station/infrahoraire-6m");
   url.searchParams.set("id-station", station.id);
   const { start, end } = utcWindow(request);

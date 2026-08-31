@@ -1,4 +1,4 @@
-import { fetchLocationData, suggestLocations } from "./api.js";
+import { fetchLocationData, suggestLocationOptions } from "./api.js";
 import { settleWithConcurrency } from "./async.js";
 import { createChartPopout, renderDashboard } from "./charts.js";
 import { CONTINUOUS_PRESET, MAX_LOCATIONS, SERIES_STYLES } from "./config.js";
@@ -248,7 +248,7 @@ function renderLocationSearch() {
   popover.hidden = !locationSearch.open;
   status.textContent = locationSearch.message;
   listbox.replaceChildren();
-  locationSearch.results.forEach((value, resultIndex) => {
+  locationSearch.results.forEach((suggestion, resultIndex) => {
     const option = document.createElement("button");
     option.type = "button";
     option.id = `location-options-${index}-option-${resultIndex}`;
@@ -257,7 +257,14 @@ function renderLocationSearch() {
     option.setAttribute("aria-selected", String(resultIndex === locationSearch.activeIndex));
     option.dataset.suggestionIndex = resultIndex;
     option.dataset.locationIndex = index;
-    option.textContent = value;
+    option.setAttribute("aria-label", suggestion.value);
+    const primary = document.createElement("strong");
+    primary.textContent = suggestion.name;
+    const context = document.createElement("span");
+    context.textContent = suggestion.context;
+    const meta = document.createElement("small");
+    meta.textContent = suggestion.meta;
+    option.append(primary, context, meta);
     listbox.append(option);
   });
   if (locationSearch.activeIndex >= 0) {
@@ -293,7 +300,7 @@ function closeLocationSearch() {
 
 function selectLocationSuggestion(index, resultIndex) {
   if (locationSearch.index !== index || !locationSearch.results[resultIndex]) return;
-  const value = locationSearch.results[resultIndex];
+  const value = locationSearch.results[resultIndex].value;
   settings.locations[index] = value;
   const input = elements.locationList.querySelector(`input[data-location-index="${index}"]`);
   if (input) input.value = value;
@@ -313,7 +320,7 @@ function queueSuggestions(index, query) {
     activeIndex: -1,
     open: true,
     loading: trimmed.length >= 2,
-    message: trimmed.length < 2 ? "Type at least 2 characters to search." : "Searching Open-Meteo…"
+    message: trimmed.length < 2 ? "Type at least 2 characters to search." : "Searching places…"
   };
   renderLocationSearch();
   if (trimmed.length < 2) {
@@ -322,7 +329,7 @@ function queueSuggestions(index, query) {
   suggestionTimer = setTimeout(async () => {
     suggestionRequest = new AbortController();
     try {
-      const results = await suggestLocations(query, suggestionRequest.signal);
+      const results = await suggestLocationOptions(query, suggestionRequest.signal);
       if (locationSearch.index !== index || locationSearch.query !== query) return;
       locationSearch = {
         ...locationSearch,

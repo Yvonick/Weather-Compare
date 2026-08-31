@@ -18,12 +18,14 @@ Public adapters need no credentials: UK Met Office, DMI Denmark, DWD Germany, Me
 
 ```bash
 export FROST_CLIENT_ID="..."
-export METEOFRANCE_API_KEY="..."
+export METEOFRANCE_APPLICATION_ID="..."
 export KNMI_API_KEY="..."
 npm start
 ```
 
-See `.env.example` for the variable names. Credentials stay on the server; the browser only calls the same-origin `/api/temperature-range` endpoint. If a provider is unconfigured, unavailable, outside its recent-data window, or has no nearby station, affected buckets remain populated from Open-Meteo and the UI explains the fallback.
+For Météo-France, subscribe the application to both the Observation and Climatological Data APIs. The server exchanges `METEOFRANCE_APPLICATION_ID` for short-lived OAuth2 tokens automatically. `METEOFRANCE_API_KEY` remains available for a manually generated Bearer token, but that token normally expires and is less suitable for a deployed app.
+
+See `.env.example` for the variable names. Credentials stay on the server; the browser only calls the same-origin `/api/temperature-range` endpoint. If a provider is unconfigured, unavailable, outside its recent-data window, or has no nearby station, affected buckets remain populated from Open-Meteo and the UI explains the fallback. The free Met Office one-minute feed is a rolling seven-day dataset, so older UK periods use Open-Meteo unless a separate archival integration is configured.
 
 ## Test
 

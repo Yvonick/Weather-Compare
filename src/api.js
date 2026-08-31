@@ -61,6 +61,7 @@ function candidateScore(result, parsed) {
   score += Number.isFinite(population) && population > 0
     ? Math.min(155, Math.log10(population + 1) * 22)
     : -12;
+  if (Number.isFinite(result.searchRank)) score += Math.max(0, 90 - result.searchRank * 9);
   return score;
 }
 
@@ -125,26 +126,66 @@ async function geocodeCandidates(query, count = 12, signal) {
   ].filter(Boolean))];
   const candidateMap = new Map();
 
-  await Promise.all(variants.map(async (variant) => {
+  await Promise.all(variants.map(async (variant, variantIndex) => {
     const url = new URL(ENDPOINTS.geocode);
     url.searchParams.set("name", variant);
     url.searchParams.set("count", String(count));
     url.searchParams.set("language", "en");
     url.searchParams.set("format", "json");
     const payload = await fetchJson(url, signal);
-    for (const result of payload.results || []) {
+    for (const [resultIndex, result] of (payload.results || []).entries()) {
       const key = [result.latitude, result.longitude, normalize(result.name), normalize(result.admin1), normalize(result.country)].join("|");
-      if (!candidateMap.has(key)) candidateMap.set(key, result);
+      const searchRank = resultIndex + variantIndex * 2;
+      const existing = candidateMap.get(key);
+      if (!existing || searchRank < existing.searchRank) candidateMap.set(key, { ...result, searchRank });
     }
   }));
 
   return rankLocationCandidates(candidateMap.values(), parsed.raw);
 }
 
-export async function suggestLocations(query, signal) {
+const placeKind = (featureCode) => {
+  const code = String(featureCode || "").toUpperCase();
+  if (code === "PPLC") return "Capital";
+  if (code.startsWith("PPLA")) return "Administrative centre";
+  if (code === "AIRP") return "Airport";
+  return "Place";
+};
+
+const compactPopulation = (value) => {
+  const population = Number(value);
+  if (!Number.isFinite(population) || population <= 0) return null;
+  if (population >= 1000000) return `${(population / 1000000).toFixed(population >= 10000000 ? 0 : 1)}M people`;
+  if (population >= 1000) return `${Math.round(population / 1000)}k people`;
+  return `${population} people`;
+};
+
+export function buildLocationSuggestion(result) {
+  const contextParts = [result.admin1 || result.admin2, result.country]
+    .filter(Boolean)
+    .filter((value, index, values) => values.findIndex((candidate) => normalize(candidate) === normalize(value)) === index);
+  return {
+    value: buildLocationLabel(result),
+    name: result.name,
+    context: contextParts.join(", "),
+    meta: [placeKind(result.feature_code), compactPopulation(result.population)].filter(Boolean).join(" · "),
+    countryCode: String(result.country_code || "").toUpperCase()
+  };
+}
+
+export async function suggestLocationOptions(query, signal) {
   if (String(query).trim().length < 2) return [];
-  const candidates = await geocodeCandidates(query, 8, signal);
-  return [...new Set(candidates.map(buildLocationLabel))].slice(0, 6);
+  const candidates = await geocodeCandidates(query, 12, signal);
+  const unique = new Map();
+  for (const candidate of candidates) {
+    const suggestion = buildLocationSuggestion(candidate);
+    if (!unique.has(suggestion.value)) unique.set(suggestion.value, suggestion);
+  }
+  return [...unique.values()].slice(0, 7);
+}
+
+export async function suggestLocations(query, signal) {
+  return (await suggestLocationOptions(query, signal)).map((suggestion) => suggestion.value);
 }
 
 export async function geocodeLocation(query, signal) {

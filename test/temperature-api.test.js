@@ -13,6 +13,14 @@ test("credential-gated providers return a usable fallback response when unconfig
   assert.match(payload.notices[0], /FROST_CLIENT_ID/);
 });
 
+test("Météo-France fallback names both supported credential modes", async () => {
+  const response = await handleTemperatureRequest(new Request(requestUrl("FR")));
+  const payload = await response.json();
+  assert.equal(payload.source, null);
+  assert.match(payload.notices[0], /METEOFRANCE_APPLICATION_ID/);
+  assert.match(payload.notices[0], /METEOFRANCE_API_KEY/);
+});
+
 test("unsupported countries retain the normalized empty-provider contract", async () => {
   const response = await handleTemperatureRequest(new Request(requestUrl("ES")));
   const payload = await response.json();
