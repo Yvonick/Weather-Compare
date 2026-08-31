@@ -426,46 +426,27 @@ async function franceStations(headers, department) {
       id: String(row.id ?? "").padStart(8, "0"),
       name: row.nom || "Météo-France station",
       latitude: finite(row.lat),
-      longitude: finite(row.lon)
+      longitude: finite(row.lon),
+      startDate: String(row.dateDebut || "").slice(0, 10),
+      endDate: String(row.dateFin || "").slice(0, 10),
+      isOpen: row.posteOuvert !== false
     })).filter((station) => station.id);
   });
 }
 
-async function provideFrance(request, env) {
-  const headers = await franceAuthHeaders(env);
-  if (!headers) return { observations: [], notice: "Météo-France needs a METEOFRANCE_APPLICATION_ID or METEOFRANCE_API_KEY; using Open-Meteo fallback" };
-  if (request.granularity === "30m") return { observations: [], notice: "Météo-France historical temperature extrema are hourly; using Open-Meteo fallback for 30-minute buckets" };
-  const department = await franceDepartment(request);
-  if (!department) return { observations: [], notice: "No French administrative department was found for this location" };
-  const station = nearestStation(await franceStations(headers, department), request);
-  if (!station) return { observations: [], notice: "No Météo-France station was found within 75 km" };
-  const { start, end } = utcWindow(request);
-  const startTime = isoSeconds(floorHour(start));
-  const endTime = isoSeconds(ceilHour(end));
-  const orderId = await cached(`france-hourly-order-${station.id}-${startTime}-${endTime}`, async () => {
-    const url = new URL("https://public-api.meteofrance.fr/public/DPClim/v1/commande-station/horaire");
-    url.searchParams.set("id-station", station.id);
-    url.searchParams.set("date-deb-periode", startTime);
-    url.searchParams.set("date-fin-periode", endTime);
-    const order = await checkedFetch(url, { headers });
-    const orderPayload = await order.json();
-    const id = orderPayload.elaboreProduitAvecDemandeResponse?.return ?? orderPayload.return ?? orderPayload.id;
-    if (!id) throw new Error("Météo-France did not return an order id");
-    return id;
-  }, 300000);
-  let text = "";
-  let lastStatus = null;
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const response = await fetch(`https://public-api.meteofrance.fr/public/DPClim/v1/commande/fichier?id-cmde=${encodeURIComponent(orderId)}`, { headers });
-    lastStatus = response.status;
-    if (response.ok && response.status !== 204) {
-      text = await response.text();
-      if (text.trim()) break;
-    }
-    if (attempt < 7) await new Promise((resolve) => setTimeout(resolve, 1500));
-  }
-  if (!text) return { observations: [], notice: `Météo-France archive order was not ready (last response ${lastStatus ?? "unknown"}); using Open-Meteo fallback` };
-  const observations = parseDelimited(text).map((row) => {
+const franceStationCovers = (station, request) => (
+  (!station.startDate || station.startDate <= request.endDate)
+  && (!station.endDate || station.endDate >= request.startDate)
+);
+
+const franceSignal = () => (
+  typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+    ? AbortSignal.timeout(10000)
+    : undefined
+);
+
+function franceHourlyObservations(text, request) {
+  return parseDelimited(text).map((row) => {
     const rawTime = column(row, ["AAAAMMJJHH", "AAAAMMJJHHMN", "date", "validite", "timestamp"]);
     const compact = String(rawTime || "").replace(/\.0$/, "").match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})?(\d{2})?$/);
     const time = compact
@@ -483,7 +464,68 @@ async function provideFrance(request, env) {
       request
     );
   }).filter((observation) => observation?.explicitRange);
-  return { source: providerSource("FR", station), observations };
+}
+
+async function franceHourlyArchive(station, request, headers, startTime, endTime) {
+  const orderId = await cached(`france-hourly-order-${station.id}-${startTime}-${endTime}`, async () => {
+    const url = new URL("https://public-api.meteofrance.fr/public/DPClim/v1/commande-station/horaire");
+    url.searchParams.set("id-station", station.id);
+    url.searchParams.set("date-deb-periode", startTime);
+    url.searchParams.set("date-fin-periode", endTime);
+    const order = await checkedFetch(url, { headers, signal: franceSignal() });
+    const orderPayload = await order.json();
+    const id = orderPayload.elaboreProduitAvecDemandeResponse?.return ?? orderPayload.return ?? orderPayload.id;
+    if (!id) throw new Error("Météo-France did not return an order id");
+    return id;
+  }, 300000);
+  let lastStatus = null;
+  let missingResponses = 0;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const response = await fetch(
+      `https://public-api.meteofrance.fr/public/DPClim/v1/commande/fichier?id-cmde=${encodeURIComponent(orderId)}`,
+      { headers, signal: franceSignal() }
+    );
+    lastStatus = response.status;
+    if (response.ok && response.status !== 204) {
+      const text = await response.text();
+      if (text.trim()) return { observations: franceHourlyObservations(text, request), status: response.status };
+    }
+    if (response.status === 404 || response.status === 410) {
+      missingResponses += 1;
+      if (missingResponses >= 3) break;
+    } else if (!response.ok && response.status !== 429) {
+      break;
+    }
+    if (attempt < 7) await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+  return { observations: [], status: lastStatus };
+}
+
+async function provideFrance(request, env) {
+  const headers = await franceAuthHeaders(env);
+  if (!headers) return { observations: [], notice: "Météo-France needs a METEOFRANCE_APPLICATION_ID or METEOFRANCE_API_KEY; using Open-Meteo fallback" };
+  if (request.granularity === "30m") return { observations: [], notice: "Météo-France historical temperature extrema are hourly; using Open-Meteo fallback for 30-minute buckets" };
+  const department = await franceDepartment(request);
+  if (!department) return { observations: [], notice: "No French administrative department was found for this location" };
+  const stations = (await franceStations(headers, department)).filter((station) => franceStationCovers(station, request));
+  const candidates = nearestStations(stations, request, 4).sort((left, right) => Number(right.isOpen) - Number(left.isOpen) || left.distanceKm - right.distanceKm);
+  if (!candidates.length) return { observations: [], notice: "No Météo-France hourly temperature station covering this period was found within 75 km" };
+  const { start, end } = utcWindow(request);
+  const startTime = isoSeconds(floorHour(start));
+  const endTime = isoSeconds(ceilHour(end));
+  let lastIssue = "no hourly extrema were returned";
+  for (const station of candidates) {
+    try {
+      const result = await franceHourlyArchive(station, request, headers, startTime, endTime);
+      if (result.observations.length) {
+        return { source: providerSource("FR", station), observations: result.observations };
+      }
+      lastIssue = `${station.name} returned ${result.status ?? "no response"}`;
+    } catch (error) {
+      lastIssue = `${station.name}: ${error.message}`;
+    }
+  }
+  return { observations: [], notice: `Météo-France had no usable hourly archive at nearby stations (${lastIssue}); using Open-Meteo fallback` };
 }
 
 async function swissStations() {
