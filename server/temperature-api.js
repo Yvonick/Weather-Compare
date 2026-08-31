@@ -479,6 +479,7 @@ async function franceHourlyArchive(station, request, headers, startTime, endTime
     return id;
   }, 300000);
   let lastStatus = null;
+  let lastDetail = "";
   let missingResponses = 0;
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const response = await fetch(
@@ -489,6 +490,8 @@ async function franceHourlyArchive(station, request, headers, startTime, endTime
     if (response.ok && response.status !== 204) {
       const text = await response.text();
       if (text.trim()) return { observations: franceHourlyObservations(text, request), status: response.status };
+    } else if (!response.ok) {
+      lastDetail = (await response.text().catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 160);
     }
     if (response.status === 404 || response.status === 410) {
       missingResponses += 1;
@@ -498,7 +501,7 @@ async function franceHourlyArchive(station, request, headers, startTime, endTime
     }
     if (attempt < 7) await new Promise((resolve) => setTimeout(resolve, 1500));
   }
-  return { observations: [], status: lastStatus };
+  return { observations: [], status: lastStatus, detail: lastDetail };
 }
 
 async function provideFrance(request, env) {
@@ -520,7 +523,7 @@ async function provideFrance(request, env) {
       if (result.observations.length) {
         return { source: providerSource("FR", station), observations: result.observations };
       }
-      lastIssue = `${station.name} returned ${result.status ?? "no response"}`;
+      lastIssue = `${station.name} returned ${result.status ?? "no response"}${result.detail ? `: ${result.detail}` : ""}`;
     } catch (error) {
       lastIssue = `${station.name}: ${error.message}`;
     }
