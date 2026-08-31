@@ -54,6 +54,7 @@ test("Météo-France uses the climatology station directory for the resolved dep
     assert.equal(payload.source.stationName, "RENNES-ST JACQUES");
     assert.equal(payload.observations.length, 2);
     assert.ok(urls.some((url) => url.includes("id-departement=35")));
+    assert.ok(urls.some((url) => url.includes("parametre=temperature")));
     assert.ok(urls.every((url) => !url.includes("/DPObs/")));
   } finally {
     globalThis.fetch = originalFetch;

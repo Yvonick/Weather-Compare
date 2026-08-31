@@ -77,7 +77,12 @@ const cached = async (key, loader, milliseconds = 3600000) => {
 
 async function checkedFetch(url, options = {}) {
   const response = await fetch(url, options);
-  if (!response.ok) throw new Error(`${new URL(url).hostname} returned ${response.status}`);
+  if (!response.ok) {
+    const target = new URL(url);
+    const detail = await response.clone().text().catch(() => "");
+    const suffix = detail.trim() ? `: ${detail.trim().slice(0, 180)}` : "";
+    throw new Error(`${target.hostname}${target.pathname} returned ${response.status}${suffix}`);
+  }
   return response;
 }
 
@@ -411,6 +416,7 @@ async function franceStations(headers, department) {
   return cached(`france-climate-stations-${department}`, async () => {
     const url = new URL("https://public-api.meteofrance.fr/public/DPClim/v1/liste-stations/infrahoraire-6m");
     url.searchParams.set("id-departement", department);
+    url.searchParams.set("parametre", "temperature");
     const stations = await asJson(url, { headers });
     return stations.map((row) => ({
       id: String(row.id ?? "").padStart(8, "0"),
