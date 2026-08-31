@@ -57,7 +57,7 @@ test("Météo-France uses the climatology station directory for the resolved dep
     assert.ok(urls.some((url) => url.includes("parametre=temperature")));
     const orderUrl = new URL(urls.find((url) => url.includes("/commande-station/infrahoraire-6m")));
     assert.equal(orderUrl.searchParams.get("date-deb-periode"), "2026-08-29T10:00:00Z");
-    assert.equal(orderUrl.searchParams.get("date-fin-periode"), "2026-08-31T13:59:59Z");
+    assert.equal(orderUrl.searchParams.get("date-fin-periode"), "2026-08-31T14:00:00Z");
     assert.ok(urls.every((url) => !url.includes("/DPObs/")));
   } finally {
     globalThis.fetch = originalFetch;
