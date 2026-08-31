@@ -21,6 +21,45 @@ test("Météo-France fallback names both supported credential modes", async () =
   assert.match(payload.notices[0], /METEOFRANCE_API_KEY/);
 });
 
+test("Météo-France uses the climatology station directory for the resolved department", async () => {
+  const originalFetch = globalThis.fetch;
+  const urls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    urls.push(url);
+    if (url === "https://portail-api.meteofrance.fr/token") {
+      return Response.json({ access_token: "test-access-token" });
+    }
+    if (url.startsWith("https://geo.api.gouv.fr/communes?")) {
+      return Response.json([{ codeDepartement: "35" }]);
+    }
+    if (url.includes("/DPClim/v1/liste-stations/infrahoraire-6m")) {
+      return Response.json([{ id: 35281001, nom: "RENNES-ST JACQUES", lat: 48.0688, lon: -1.734 }]);
+    }
+    if (url.includes("/DPClim/v1/commande-station/infrahoraire-6m")) {
+      return Response.json({ elaboreProduitAvecDemandeResponse: { return: "order-1" } }, { status: 202 });
+    }
+    if (url.includes("/DPClim/v1/commande/fichier")) {
+      return new Response("DATE;T\n20260830000000;288.15\n20260830000600;289.15\n");
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  };
+
+  try {
+    const response = await handleTemperatureRequest(new Request(
+      "https://weather.test/api/temperature-range?countryCode=FR&latitude=48.1173&longitude=-1.6778&timezone=Europe%2FParis&startDate=2026-08-30&endDate=2026-08-30&granularity=1h"
+    ), { METEOFRANCE_APPLICATION_ID: "test-application-id" });
+    const payload = await response.json();
+    assert.equal(payload.source.name, "Météo-France");
+    assert.equal(payload.source.stationName, "RENNES-ST JACQUES");
+    assert.equal(payload.observations.length, 2);
+    assert.ok(urls.some((url) => url.includes("id-departement=35")));
+    assert.ok(urls.every((url) => !url.includes("/DPObs/")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("unsupported countries retain the normalized empty-provider contract", async () => {
   const response = await handleTemperatureRequest(new Request(requestUrl("ES")));
   const payload = await response.json();
