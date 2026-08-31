@@ -498,6 +498,7 @@ async function franceHourlyArchive(station, request, auth, startTime, endTime) {
     } else if (!response.ok) {
       lastDetail = (await response.text().catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 160);
     }
+    if (lastDetail.toLowerCase().includes("production en échec")) break;
     if (response.status === 404 || response.status === 410) {
       missingResponses += 1;
       if (missingResponses >= 3) break;
@@ -516,7 +517,7 @@ async function provideFrance(request, env) {
   const department = await franceDepartment(request);
   if (!department) return { observations: [], notice: "No French administrative department was found for this location" };
   const stations = (await franceStations(auth, department)).filter((station) => franceStationCovers(station, request));
-  const candidates = nearestStations(stations, request, 4).sort((left, right) => Number(right.isOpen) - Number(left.isOpen) || left.distanceKm - right.distanceKm);
+  const candidates = nearestStations(stations, request, 8).sort((left, right) => Number(right.isOpen) - Number(left.isOpen) || left.distanceKm - right.distanceKm);
   if (!candidates.length) return { observations: [], notice: "No Météo-France hourly temperature station covering this period was found within 75 km" };
   const { start, end } = utcWindow(request);
   const startTime = isoSeconds(floorHour(start));
