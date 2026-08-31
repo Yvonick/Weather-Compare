@@ -10,7 +10,7 @@ const PROVIDER_INFO = Object.freeze({
   DK: { id: "dmi", name: "DMI", cadenceMinutes: 10, rangeMethod: "hourly extrema / 10-minute observations", docsUrl: "https://opendatadocs.dmi.govcloud.dk/en/" },
   NO: { id: "frost", name: "MET Norway Frost", cadenceMinutes: 60, rangeMethod: "official hourly extrema", docsUrl: "https://frost.met.no/" },
   DE: { id: "dwd", name: "DWD Climate Data Center", cadenceMinutes: 10, rangeMethod: "official 10-minute extrema", docsUrl: "https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/10_minutes/" },
-  FR: { id: "meteo-france", name: "Météo-France", cadenceMinutes: 6, rangeMethod: "6-minute observations", docsUrl: "https://confluence-meteofrance.atlassian.net/wiki/spaces/OpenDataMeteoFrance/pages/854196251/API+Cibl+e+Clim+EN" },
+  FR: { id: "meteo-france", name: "Météo-France", cadenceMinutes: 60, rangeMethod: "official hourly extrema", docsUrl: "https://confluence-meteofrance.atlassian.net/wiki/spaces/OpenDataMeteoFrance/pages/854196251/API+Cibl+e+Clim+EN" },
   CH: { id: "meteoswiss", name: "MeteoSwiss", cadenceMinutes: 10, rangeMethod: "10-minute observations", docsUrl: "https://opendatadocs.meteoswiss.ch/a-data-groundbased/a1-automatic-weather-stations" },
   NL: { id: "knmi", name: "KNMI", cadenceMinutes: 10, rangeMethod: "10-minute observations", docsUrl: "https://developer.dataplatform.knmi.nl/edr-api" },
   AT: { id: "geosphere", name: "GeoSphere Austria", cadenceMinutes: 10, rangeMethod: "official 10-minute extrema", docsUrl: "https://data.hub.geosphere.at/showcase/api-grundlagen-/" },
@@ -107,9 +107,9 @@ const utcWindow = (request) => ({
   end: new Date(Date.parse(`${request.endDate}T23:59:59Z`) + 14 * 3600000)
 });
 const isoSeconds = (value) => value.toISOString().replace(".000Z", "Z");
-const SIX_MINUTES_MS = 6 * 60 * 1000;
-const floorSixMinutes = (value) => new Date(Math.floor(value.getTime() / SIX_MINUTES_MS) * SIX_MINUTES_MS);
-const ceilSixMinutes = (value) => new Date(Math.ceil(value.getTime() / SIX_MINUTES_MS) * SIX_MINUTES_MS);
+const HOUR_MS = 60 * 60 * 1000;
+const floorHour = (value) => new Date(Math.floor(value.getTime() / HOUR_MS) * HOUR_MS);
+const ceilHour = (value) => new Date(Math.ceil(value.getTime() / HOUR_MS) * HOUR_MS);
 
 function sampledObservation(instant, value, request) {
   const avg = finite(value);
@@ -418,7 +418,7 @@ async function franceDepartment(request) {
 
 async function franceStations(headers, department) {
   return cached(`france-climate-stations-${department}`, async () => {
-    const url = new URL("https://public-api.meteofrance.fr/public/DPClim/v1/liste-stations/infrahoraire-6m");
+    const url = new URL("https://public-api.meteofrance.fr/public/DPClim/v1/liste-stations/horaire");
     url.searchParams.set("id-departement", department);
     url.searchParams.set("parametre", "temperature");
     const stations = await asJson(url, { headers });
@@ -434,15 +434,16 @@ async function franceStations(headers, department) {
 async function provideFrance(request, env) {
   const headers = await franceAuthHeaders(env);
   if (!headers) return { observations: [], notice: "Météo-France needs a METEOFRANCE_APPLICATION_ID or METEOFRANCE_API_KEY; using Open-Meteo fallback" };
+  if (request.granularity === "30m") return { observations: [], notice: "Météo-France historical temperature extrema are hourly; using Open-Meteo fallback for 30-minute buckets" };
   const department = await franceDepartment(request);
   if (!department) return { observations: [], notice: "No French administrative department was found for this location" };
   const station = nearestStation(await franceStations(headers, department), request);
   if (!station) return { observations: [], notice: "No Météo-France station was found within 75 km" };
-  const url = new URL("https://public-api.meteofrance.fr/public/DPClim/v1/commande-station/infrahoraire-6m");
+  const url = new URL("https://public-api.meteofrance.fr/public/DPClim/v1/commande-station/horaire");
   url.searchParams.set("id-station", station.id);
   const { start, end } = utcWindow(request);
-  url.searchParams.set("date-deb-periode", isoSeconds(floorSixMinutes(start)));
-  url.searchParams.set("date-fin-periode", isoSeconds(ceilSixMinutes(end)));
+  url.searchParams.set("date-deb-periode", isoSeconds(floorHour(start)));
+  url.searchParams.set("date-fin-periode", isoSeconds(ceilHour(end)));
   const order = await checkedFetch(url, { headers });
   const orderPayload = await order.json();
   const orderId = orderPayload.elaboreProduitAvecDemandeResponse?.return ?? orderPayload.return ?? orderPayload.id;
@@ -455,14 +456,23 @@ async function provideFrance(request, env) {
   }
   if (!text) return { observations: [], notice: "Météo-France archive order was not ready; using Open-Meteo fallback" };
   const observations = parseDelimited(text).map((row) => {
-    const rawTime = column(row, ["date", "validite", "timestamp"]);
-    const compact = String(rawTime || "").match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})?/);
+    const rawTime = column(row, ["AAAAMMJJHH", "AAAAMMJJHHMN", "date", "validite", "timestamp"]);
+    const compact = String(rawTime || "").replace(/\.0$/, "").match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})?(\d{2})?$/);
     const time = compact
-      ? `${compact[1]}-${compact[2]}-${compact[3]}T${compact[4]}:${compact[5]}:${compact[6] || "00"}Z`
+      ? `${compact[1]}-${compact[2]}-${compact[3]}T${compact[4]}:${compact[5] || "00"}:${compact[6] || "00"}Z`
       : rawTime;
-    const temperature = finite(column(row, ["t", "temperature", "tair"]));
-    return sampledObservation(time, temperature !== null && temperature > 150 ? temperature - 273.15 : temperature, request);
-  }).filter(Boolean);
+    const toCelsius = (value) => {
+      const temperature = finite(value);
+      return temperature !== null && temperature > 150 ? temperature - 273.15 : temperature;
+    };
+    return rangedObservation(
+      time,
+      toCelsius(column(row, ["t", "tm", "temperature", "tair"])),
+      toCelsius(column(row, ["tn", "tmin", "temperature_minimale"])),
+      toCelsius(column(row, ["tx", "tmax", "temperature_maximale"])),
+      request
+    );
+  }).filter((observation) => observation?.explicitRange);
   return { source: providerSource("FR", station), observations };
 }
 
