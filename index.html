@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Compare historical and forecast weather and air quality across places.">
   <title>Weather Compare</title>
-  <link rel="stylesheet" href="./styles.css?v=chart-layout-3">
+  <link rel="stylesheet" href="./styles.css?v=reliability-stations-4">
 </head>
 <body>
   <main class="page-shell">
@@ -68,6 +68,7 @@
               </select>
             </label>
           </div>
+          <small class="field-note">Station feeds may lag for recent or in-progress hours. A range is shown only when the source supplies real extrema or multiple samples inside the bucket.</small>
 
           <label id="table-gradient-field" class="checkbox-field">
             <input id="table-gradient-input" name="tableGradient" type="checkbox">
@@ -121,6 +122,7 @@
             <li><a href="https://developer.dataplatform.knmi.nl/edr-api" target="_blank" rel="noreferrer">KNMI Netherlands</a> — ten-minute station observations (API key required)</li>
             <li><a href="https://data.hub.geosphere.at/showcase/api-grundlagen-/" target="_blank" rel="noreferrer">GeoSphere Austria</a> — official ten-minute extrema</li>
             <li><a href="https://en.ilmatieteenlaitos.fi/open-data-manual-wfs-examples-and-guidelines" target="_blank" rel="noreferrer">FMI Finland</a> — ten-minute station observations</li>
+            <li><a href="https://mesonet.agron.iastate.edu/request/download.phtml?network=ASOS" target="_blank" rel="noreferrer">IEM / NOAA ASOS</a> — U.S. five-minute airport observations, with routine and special reports as fallback</li>
             <li><a href="https://airindex.eea.europa.eu/AQI/index.html" target="_blank" rel="noreferrer">EEA European AQI methodology</a> — air-quality guide bands</li>
             <li><a href="https://www.geonames.org/" target="_blank" rel="noreferrer">GeoNames</a> — underlying place dataset attribution</li>
           </ul>
@@ -145,6 +147,6 @@
   </dialog>
 
   <noscript><p class="startup-error">Weather Compare needs JavaScript enabled to create the location search controls.</p></noscript>
-  <script defer src="./app.bundle.js?v=chart-layout-3"></script>
+  <script defer src="./app.bundle.js?v=reliability-stations-4"></script>
 </body>
 </html>

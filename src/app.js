@@ -592,4 +592,5 @@ renderControls();
 renderData();
 elements.bootStatus.hidden = true;
 window.__WEATHER_COMPARE_STARTED__ = true;
-loadComparison();
+setStatus("Interface ready. Loading the saved comparison…");
+requestAnimationFrame(() => requestAnimationFrame(() => loadComparison()));

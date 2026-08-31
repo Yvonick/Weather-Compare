@@ -30,6 +30,7 @@ function emptyBucket(key, granularity) {
     temperatureMin: Infinity, temperatureMax: -Infinity, temperatureSum: 0, temperatureCount: 0,
     stationTemperatureMin: Infinity, stationTemperatureMax: -Infinity,
     stationTemperatureSum: 0, stationTemperatureCount: 0, stationTemperatureExplicitRange: false,
+    temperatureStationName: null, temperatureStationDistanceKm: null, temperatureProviderName: null,
     precipitationSum: 0, precipitationCount: 0,
     snowfallSum: 0, snowfallCount: 0,
     sunshineSeconds: 0, sunshineCount: 0,
@@ -111,7 +112,7 @@ function ingestAir(hourly = {}, ensureBucket) {
   });
 }
 
-function ingestTemperatureObservations(observations = [], ensureBucket) {
+function ingestTemperatureObservations(observations = [], ensureBucket, source = {}) {
   observations.forEach((observation) => {
     if (!observation?.time) return;
     const bucket = ensureBucket(observation.time);
@@ -125,6 +126,12 @@ function ingestTemperatureObservations(observations = [], ensureBucket) {
     if (min !== null) bucket.stationTemperatureMin = Math.min(bucket.stationTemperatureMin, min);
     if (max !== null) bucket.stationTemperatureMax = Math.max(bucket.stationTemperatureMax, max);
     bucket.stationTemperatureExplicitRange ||= Boolean(observation.explicitRange && min !== null && max !== null);
+    bucket.temperatureStationName ||= observation.stationName || source.stationName || null;
+    bucket.temperatureProviderName ||= observation.providerName || source.name || null;
+    if (!Number.isFinite(bucket.temperatureStationDistanceKm)) {
+      const distance = Number(observation.stationDistanceKm ?? source.stationDistanceKm);
+      bucket.temperatureStationDistanceKm = Number.isFinite(distance) ? distance : null;
+    }
   });
 }
 
@@ -158,6 +165,9 @@ function finalize(bucket) {
     temperatureSampleCount: temperatureCount,
     temperatureRangeAvailable: hasRange,
     temperatureSourceKind: usesStationTemperature ? "national-station" : "open-meteo",
+    temperatureStationName: usesStationTemperature ? bucket.temperatureStationName : null,
+    temperatureStationDistanceKm: usesStationTemperature ? bucket.temperatureStationDistanceKm : null,
+    temperatureProviderName: usesStationTemperature ? bucket.temperatureProviderName : "Open-Meteo",
     precipitationSum: bucket.precipitationCount ? bucket.precipitationSum : null,
     snowfallSum: bucket.snowfallCount ? bucket.snowfallSum : null,
     sunshineHours: bucket.sunshineCount ? bucket.sunshineSeconds / 3600 : null,
@@ -197,7 +207,7 @@ export function aggregateLocationData(resolved, weather, air, granularity, sourc
   };
   ingestWeather(weather.hourly, ensureBucket);
   ingestAir(air.hourly, ensureBucket);
-  ingestTemperatureObservations(temperatureRange.observations, ensureBucket);
+  ingestTemperatureObservations(temperatureRange.observations, ensureBucket, temperatureRange.source);
   return {
     ...resolved,
     timezone: weather.timezone || air.timezone || resolved.timezone || "auto",

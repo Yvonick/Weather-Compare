@@ -16,7 +16,8 @@ const PROVIDER_INFO = Object.freeze({
   CH: { id: "meteoswiss", name: "MeteoSwiss", cadenceMinutes: 10, rangeMethod: "10-minute observations", docsUrl: "https://opendatadocs.meteoswiss.ch/a-data-groundbased/a1-automatic-weather-stations" },
   NL: { id: "knmi", name: "KNMI", cadenceMinutes: 10, rangeMethod: "10-minute observations", docsUrl: "https://developer.dataplatform.knmi.nl/edr-api" },
   AT: { id: "geosphere", name: "GeoSphere Austria", cadenceMinutes: 10, rangeMethod: "official 10-minute extrema", docsUrl: "https://data.hub.geosphere.at/showcase/api-grundlagen-/" },
-  FI: { id: "fmi", name: "Finnish Meteorological Institute", cadenceMinutes: 10, rangeMethod: "10-minute observations", docsUrl: "https://en.ilmatieteenlaitos.fi/open-data-manual-wfs-examples-and-guidelines" }
+  FI: { id: "fmi", name: "Finnish Meteorological Institute", cadenceMinutes: 10, rangeMethod: "10-minute observations", docsUrl: "https://en.ilmatieteenlaitos.fi/open-data-manual-wfs-examples-and-guidelines" },
+  US: { id: "iem-asos", name: "IEM / NOAA ASOS", cadenceMinutes: 5, rangeMethod: "5-minute ASOS observations", docsUrl: "https://mesonet.agron.iastate.edu/request/download.phtml?network=ASOS" }
 });
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), {
@@ -133,8 +134,9 @@ function rangedObservation(instant, avgValue, minValue, maxValue, request, inter
 function parseDelimited(text, delimiter = ";") {
   const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim());
   if (!lines.length) return [];
-  const headers = lines[0].split(delimiter).map((value) => value.trim());
-  return lines.slice(1).map((line) => Object.fromEntries(line.split(delimiter).map((value, index) => [headers[index], value.trim()])));
+  const clean = (value) => value.trim().replace(/^"|"$/g, "").replaceAll('""', '"');
+  const headers = lines[0].split(delimiter).map(clean);
+  return lines.slice(1).map((line) => Object.fromEntries(line.split(delimiter).map((value, index) => [headers[index], clean(value)])));
 }
 
 function column(row, candidates) {
@@ -231,6 +233,113 @@ async function provideUk(request) {
     source: providerSource("GB", station),
     observations,
     notice: observations.length ? null : "Met Office one-minute data is only available in its rolling 7-day public feed"
+  };
+}
+
+async function usStationCandidates(request) {
+  const key = `us-stations-${request.latitude.toFixed(2)}-${request.longitude.toFixed(2)}`;
+  return cached(key, async () => {
+    const latitudeRadius = 1.1;
+    const longitudeRadius = Math.min(2.2, 1.1 / Math.max(0.35, Math.cos(radians(request.latitude))));
+    const url = new URL("https://aviationweather.gov/api/data/stationinfo");
+    url.searchParams.set("bbox", [
+      request.latitude - latitudeRadius,
+      request.longitude - longitudeRadius,
+      request.latitude + latitudeRadius,
+      request.longitude + longitudeRadius
+    ].map((value) => value.toFixed(4)).join(","));
+    url.searchParams.set("format", "json");
+    const payload = await asJson(url, {
+      headers: { Accept: "application/json", "User-Agent": "WeatherCompare/1.0" }
+    });
+    const rows = Array.isArray(payload) ? payload : payload.entries || [];
+    return nearestStations(rows.map((row) => {
+      const icaoId = String(row.icaoId || "").toUpperCase();
+      const siteType = Array.isArray(row.siteType) ? row.siteType.join(",") : String(row.siteType || "");
+      return {
+        id: String(row.faaId || row.iataId || (icaoId.startsWith("K") ? icaoId.slice(1) : icaoId)).toUpperCase(),
+        icaoId,
+        name: [row.site || row.name || row.icaoId, icaoId].filter(Boolean).join(" · "),
+        latitude: Number(row.lat),
+        longitude: Number(row.lon),
+        country: String(row.country || "").toUpperCase(),
+        siteType
+      };
+    }).filter((station) => (
+      station.id
+      && (!station.country || station.country === "US")
+      && (!station.siteType || station.siteType.toUpperCase().includes("METAR"))
+    )), request, 8);
+  }, 86400000);
+}
+
+function parseIemObservations(text, request) {
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim() && !line.startsWith("#"));
+  const headerIndex = lines.findIndex((line) => /^station,valid(?:,|$)/i.test(line.trim()));
+  if (headerIndex < 0) return [];
+  return parseDelimited(lines.slice(headerIndex).join("\n"), ",").map((row) => {
+    const fahrenheit = finite(row.tmpf);
+    if (fahrenheit === null || !row.valid) return null;
+    const rawTime = String(row.valid).trim();
+    const instant = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(rawTime)
+      ? rawTime
+      : `${rawTime.replace(" ", "T")}Z`;
+    return sampledObservation(instant, (fahrenheit - 32) * 5 / 9, request);
+  }).filter(Boolean);
+}
+
+function hasUsableSubhourlyCoverage(observations, granularity) {
+  const minutes = { "30m": 30, "1h": 60, "3h": 180, "6h": 360, "12h": 720, day: 1440 }[granularity] || 60;
+  const counts = new Map();
+  for (const observation of observations) {
+    const [date, clock = "00:00"] = observation.time.split("T");
+    const [hour = 0, minute = 0] = clock.split(":").map(Number);
+    const bucket = Math.floor((hour * 60 + minute) / minutes) * minutes;
+    const key = `${date}-${bucket}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return [...counts.values()].some((count) => count > 1);
+}
+
+async function iemAsosObservations(station, request) {
+  const { start, end } = utcWindow(request);
+  const url = new URL("https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py");
+  url.searchParams.set("station", station.id);
+  url.searchParams.set("data", "tmpf");
+  url.searchParams.set("sts", isoSeconds(start));
+  url.searchParams.set("ets", isoSeconds(end));
+  url.searchParams.set("tz", "UTC");
+  url.searchParams.set("format", "onlycomma");
+  url.searchParams.set("latlon", "yes");
+  url.searchParams.set("elev", "no");
+  url.searchParams.set("missing", "null");
+  url.searchParams.set("trace", "null");
+  for (const reportType of [1, 3, 4]) url.searchParams.append("report_type", String(reportType));
+  const text = await cached(`iem-asos-${station.id}-${request.startDate}-${request.endDate}`, () => asText(url), 600000);
+  return parseIemObservations(text, request);
+}
+
+async function provideUs(request) {
+  const candidates = await usStationCandidates(request);
+  if (!candidates.length) return { observations: [], notice: "No U.S. ASOS station was found within 75 km" };
+  let sawPointSamples = false;
+  for (const [index, station] of candidates.slice(0, 4).entries()) {
+    if (index) await new Promise((resolve) => setTimeout(resolve, 1050));
+    try {
+      const observations = await iemAsosObservations(station, request);
+      sawPointSamples ||= observations.length > 0;
+      if (!hasUsableSubhourlyCoverage(observations, request.granularity)) continue;
+      return {
+        source: providerSource("US", station),
+        observations
+      };
+    } catch { /* Try the next-nearest reporting station. */ }
+  }
+  return {
+    observations: [],
+    notice: sawPointSamples
+      ? "Nearby U.S. stations only supplied isolated samples for this period, so no within-bucket range can be claimed"
+      : "U.S. five-minute ASOS observations can lag or be incomplete for the most recent hours; using Open-Meteo fallback"
   };
 }
 
@@ -714,7 +823,7 @@ async function provideFinland(request) {
 
 const providers = Object.freeze({
   GB: provideUk, DK: provideDmi, NO: provideFrost, DE: provideDwd, FR: provideFrance,
-  CH: provideSwiss, NL: provideKnmi, AT: provideAustria, FI: provideFinland
+  CH: provideSwiss, NL: provideKnmi, AT: provideAustria, FI: provideFinland, US: provideUs
 });
 
 function parseRequest(url) {

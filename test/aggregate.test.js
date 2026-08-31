@@ -93,7 +93,7 @@ test("national station observations replace Open-Meteo temperature per bucket an
     {},
     { kind: "historical" },
     {
-      source: { name: "Test station" },
+      source: { name: "Test provider", stationName: "Test station", stationDistanceKm: 4.2 },
       observations: [
         { time: "2026-08-06T11:10", avg: 17, min: 16.8, max: 17.2, sampleCount: 1, explicitRange: true },
         { time: "2026-08-06T11:20", avg: 18, min: 17.7, max: 18.4, sampleCount: 1, explicitRange: true }
@@ -104,9 +104,13 @@ test("national station observations replace Open-Meteo temperature per bucket an
   assert.equal(result.rows[0].temperatureAvg, 17.5);
   assert.equal(result.rows[0].temperatureMax, 18.4);
   assert.equal(result.rows[0].temperatureSourceKind, "national-station");
+  assert.equal(result.rows[0].temperatureStationName, "Test station");
+  assert.equal(result.rows[0].temperatureStationDistanceKm, 4.2);
+  assert.equal(result.rows[0].temperatureProviderName, "Test provider");
   assert.equal(result.rows[1].temperatureAvg, 19);
   assert.equal(result.rows[1].temperatureMin, null);
   assert.equal(result.rows[1].temperatureSourceKind, "open-meteo");
+  assert.equal(result.rows[1].temperatureStationName, null);
 });
 
 test("multiple sub-hourly station samples form a range without explicit extrema", () => {

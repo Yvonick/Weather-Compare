@@ -138,7 +138,7 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--green
 .axis-date-label { font-size: 10px; }
 .forecast-axis-label { fill: var(--green-dark); font-family: inherit; font-size: 10px; font-weight: 700; letter-spacing: .08em; }
 .forecast-date-label { fill: var(--green-dark); font-weight: 700; }
-.chart-tooltip { position: absolute; z-index: 3; max-width: 230px; border: 1px solid var(--line-strong); border-radius: .55rem; background: #111; color: #fff; padding: .5rem .65rem; font-size: .72rem; line-height: 1.4; pointer-events: none; }
+.chart-tooltip { position: absolute; z-index: 3; max-width: 320px; border: 1px solid var(--line-strong); border-radius: .55rem; background: #111; color: #fff; padding: .5rem .65rem; font-size: .72rem; line-height: 1.4; pointer-events: none; }
 .threshold-legend { display: flex; flex-wrap: wrap; gap: .35rem .65rem; color: var(--muted); font-size: .65rem; }
 .threshold-item { display: inline-flex; gap: .3rem; align-items: center; }
 .threshold-swatch { display: inline-block; width: .7rem; height: .7rem; border: 1px solid var(--line); }
@@ -155,6 +155,8 @@ th, td { border-top: 1px solid var(--line); border-right: 1px solid var(--line);
 th { background: var(--surface); font-weight: 600; }
 thead th { text-align: center; }
 .table-location-heading { position: sticky; left: 0; z-index: 2; width: 12rem; min-width: 12rem; max-width: 12rem; overflow-wrap: anywhere; text-align: left; white-space: normal; }
+.table-location-heading strong { display: block; }
+.table-location-context { display: block; margin-top: .3rem; color: var(--muted); font-size: .65rem; font-weight: 400; line-height: 1.35; }
 .table-metric-heading { position: sticky; left: 12rem; z-index: 2; min-width: 9rem; text-align: left; }
 thead .table-location-heading, thead .table-metric-heading { z-index: 3; }
 .table-date-heading { min-width: 8rem; }

@@ -6,17 +6,18 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const outputDirectory = path.join(projectRoot, "dist", "server");
 
 const assets = await Promise.all([
-  ["/", "index.html", "text/html; charset=utf-8"],
-  ["/styles.css", "styles.css", "text/css; charset=utf-8"],
-  ["/app.bundle.js", "app.bundle.js", "text/javascript; charset=utf-8"]
-].map(async ([route, filename, contentType]) => ({
+  ["/", "index.html", "text/html; charset=utf-8", "no-cache"],
+  ["/styles.css", "styles.css", "text/css; charset=utf-8", "public, max-age=86400, stale-while-revalidate=604800"],
+  ["/app.bundle.js", "app.bundle.js", "text/javascript; charset=utf-8", "public, max-age=86400, stale-while-revalidate=604800"]
+].map(async ([route, filename, contentType, cacheControl]) => ({
   route,
   contentType,
+  cacheControl,
   body: await readFile(path.join(projectRoot, filename), "utf8")
 })));
 
-const serializedAssets = assets.map(({ route, contentType, body }) =>
-  `  [${JSON.stringify(route)}, { contentType: ${JSON.stringify(contentType)}, body: ${JSON.stringify(body)} }]`
+const serializedAssets = assets.map(({ route, contentType, cacheControl, body }) =>
+  `  [${JSON.stringify(route)}, { contentType: ${JSON.stringify(contentType)}, cacheControl: ${JSON.stringify(cacheControl)}, body: ${JSON.stringify(body)} }]`
 ).join(",\n");
 
 const ukStationsSource = (await readFile(path.join(projectRoot, "server", "uk-stations.js"), "utf8"))
@@ -57,7 +58,7 @@ export default {
     return new Response(request.method === "HEAD" ? null : asset.body, {
       headers: {
         "Content-Type": asset.contentType,
-        "Cache-Control": "no-cache",
+        "Cache-Control": asset.cacheControl,
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "strict-origin-when-cross-origin"
       }
