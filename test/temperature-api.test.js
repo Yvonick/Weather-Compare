@@ -72,6 +72,7 @@ test("Météo-France uses official hourly extrema from the resolved department",
     assert.equal(orderUrl.searchParams.get("date-deb-periode"), "2026-08-29T10:00:00Z");
     assert.equal(orderUrl.searchParams.get("date-fin-periode"), "2026-08-31T14:00:00Z");
     assert.equal(urls.filter((url) => url.includes("/commande-station/horaire")).length, 1);
+    assert.ok(urls.filter((url) => url.includes("/DPClim/")).every((url) => new URL(url).searchParams.get("tokenOauth2") === "test-access-token"));
     assert.ok(urls.every((url) => !url.includes("/DPObs/")));
   } finally {
     globalThis.fetch = originalFetch;
