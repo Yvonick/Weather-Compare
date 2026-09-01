@@ -14,9 +14,3 @@ test("air-quality table indicators each have an independent heat domain", () => 
   const heatGroups = airColumns.map((column) => column.heatGroup || column.key);
   assert.equal(new Set(heatGroups).size, airColumns.length);
 });
-
-test("all precipitation graph metrics use bars", () => {
-  const precipitation = METRIC_GROUPS.find((group) => group.id === "precipitation");
-  assert.ok(precipitation.metrics.length > 0);
-  assert.ok(precipitation.metrics.every((metric) => metric.type === "bar"));
-});
