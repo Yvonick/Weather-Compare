@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildTableModel, chartScale, chartTickParts, lineDashForKind, tableHeatStyle } from "../src/charts.js";
+import { buildTableModel, chartScale, chartTickParts, groupedBarLayout, lineDashForKind, tableHeatStyle } from "../src/charts.js";
 
 const seriesWith = (key, values) => [{
   rows: values.map((value) => ({ [key]: value }))
@@ -39,6 +39,24 @@ test("zero remains available when it is part of the displayed dataset", () => {
   );
 
   assert.equal(scale.min, 0);
+});
+
+test("bar charts always use a truthful zero baseline", () => {
+  const scale = chartScale(
+    { id: "precipitationSum", digits: 1, floorZero: true, type: "bar" },
+    seriesWith("precipitationSum", [2.4, 3.1, 4.7])
+  );
+  assert.equal(scale.min, 0);
+  assert.ok(scale.max > 4.7);
+});
+
+test("grouped bars fit inside their time slot for small and large comparisons", () => {
+  for (const [count, slotWidth, zoom] of [[1, 30, 1], [4, 30, 1], [20, 30, 1], [20, 21, 0.7]]) {
+    const layout = groupedBarLayout(count, slotWidth, zoom);
+    assert.ok(layout.barWidth > 0);
+    assert.ok(layout.groupWidth <= slotWidth);
+    assert.ok(layout.barWidth * count + layout.gap * (count - 1) <= layout.groupWidth + 0.001);
+  }
 });
 
 test("dash encoding is reserved exclusively for forecast data", () => {

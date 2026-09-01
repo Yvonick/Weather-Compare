@@ -63,12 +63,12 @@ export const METRIC_GROUPS = Object.freeze([
     id: "precipitation",
     eyebrow: "Precipitation",
     title: "Rain and snow",
-    description: "Precipitation is shown in millimetres and snowfall in centimetres.",
+    description: "Precipitation totals, snowfall, and forecast probability are shown as grouped bars for direct comparison between locations.",
     tableTitle: "Precipitation and snow summary",
     metrics: [
-      { id: "precipitationSum", title: "Precipitation sum", unit: "mm", digits: 1, floorZero: true },
-      { id: "snowfallSum", title: "Snowfall sum", unit: "cm", digits: 2, floorZero: true },
-      { id: "precipitationProbabilityMax", title: "Precipitation probability", unit: "%", digits: 0, floorZero: true, forecastOnly: true }
+      { id: "precipitationSum", title: "Precipitation sum", unit: "mm", digits: 1, floorZero: true, type: "bar" },
+      { id: "snowfallSum", title: "Snowfall sum", unit: "cm", digits: 2, floorZero: true, type: "bar" },
+      { id: "precipitationProbabilityMax", title: "Precipitation probability", unit: "%", digits: 0, floorZero: true, forecastOnly: true, type: "bar" }
     ],
     tableColumns: [
       { key: "precipitationSum", label: "Precip. (mm)", digits: 1 },
