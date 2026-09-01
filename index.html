@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Compare historical and forecast weather and air quality across places.">
   <title>Weather Compare</title>
-  <link rel="stylesheet" href="./styles.css?v=reliability-stations-4">
+  <link rel="stylesheet" href="./styles.css?v=forecast-boundary-5">
 </head>
 <body>
   <main class="page-shell">
@@ -89,9 +89,9 @@
             <div class="timeline-key-items" aria-label="Historical and forecast styles">
               <span><i class="key-marker historical-marker"></i>Historical</span>
               <span><i class="key-marker forecast-marker"></i>Forecast</span>
-              <span><i class="key-now-line"></i>Now</span>
+              <span><i class="key-now-line"></i>Forecast begins</span>
             </div>
-            <p>Forecast table columns are shaded; forecast chart lines are dashed and their markers are hollow. Location identity comes from color and marker shape. Confidence is a transparent lead-time guide for this prototype, not an ensemble-derived probability.</p>
+            <p>Forecast table columns are shaded; forecast chart lines are dashed and their markers are hollow. Past-only windows stop at the current hour, and any current-day values still supplied by the forecast feed remain labelled as forecast. Location identity comes from color and marker shape. Confidence is a transparent lead-time guide for this prototype, not an ensemble-derived probability.</p>
           </div>
         </form>
 
@@ -147,6 +147,6 @@
   </dialog>
 
   <noscript><p class="startup-error">Weather Compare needs JavaScript enabled to create the location search controls.</p></noscript>
-  <script defer src="./app.bundle.js?v=reliability-stations-4"></script>
+  <script defer src="./app.bundle.js?v=forecast-boundary-5"></script>
 </body>
 </html>

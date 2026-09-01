@@ -753,8 +753,7 @@ const shiftLocalDate = (dateString, offsetDays) => {
 
 function splitTimeline(settings, now = new Date()) {
   const today = formatLocalDate(now);
-  const wantsForecast = settings.preset === "7d7f" || settings.endDate > today;
-  if (!wantsForecast) {
+  if (settings.endDate < today) {
     return [{ kind: "historical", startDate: settings.startDate, endDate: settings.endDate }];
   }
 
@@ -767,14 +766,39 @@ function splitTimeline(settings, now = new Date()) {
     });
   }
   if (settings.endDate >= today) {
-    ranges.push({
+    const forecastRange = {
       kind: "forecast",
       startDate: settings.startDate > today ? settings.startDate : today,
       endDate: settings.endDate,
       forecastStartDate: today
-    });
+    };
+    // A past-only preset includes the elapsed part of today, but never the
+    // future remainder of the day. Today's values come from the forecast API
+    // until the historical archive has caught up, so keep their provenance
+    // explicit and clip the response to the actual current time.
+    if (settings.preset !== "7d7f" && settings.endDate === today) {
+      forecastRange.clipAfter = now.toISOString();
+    }
+    ranges.push(forecastRange);
   }
   return ranges;
+}
+
+function clipHourlyPayloadToInstant(payload, instant) {
+  const times = payload?.hourly?.time;
+  const instantMs = Date.parse(instant);
+  if (!Array.isArray(times) || !Number.isFinite(instantMs)) return payload;
+
+  const utcOffsetSeconds = Number(payload.utc_offset_seconds) || 0;
+  const localCutoff = new Date(instantMs + utcOffsetSeconds * 1000).toISOString().slice(0, 16);
+  const keptIndexes = times.flatMap((time, index) => String(time).slice(0, 16) <= localCutoff ? [index] : []);
+  const hourly = Object.fromEntries(Object.entries(payload.hourly).map(([key, values]) => [
+    key,
+    Array.isArray(values) && values.length === times.length
+      ? keptIndexes.map((index) => values[index])
+      : values
+  ]));
+  return { ...payload, hourly };
 }
 
 function weatherUrl(resolved, range) {
@@ -860,8 +884,11 @@ async function fetchLocationData(query, settings, signal) {
         : Promise.resolve({ source: null, observations: [], notices: [] })
     ]);
     if (weatherResult.status === "rejected") throw weatherResult.reason;
-    const weather = weatherResult.value;
-    const air = airResult.status === "fulfilled" ? airResult.value : { hourly: {} };
+    const weather = range.clipAfter
+      ? clipHourlyPayloadToInstant(weatherResult.value, range.clipAfter)
+      : weatherResult.value;
+    const rawAir = airResult.status === "fulfilled" ? airResult.value : { hourly: {} };
+    const air = range.clipAfter ? clipHourlyPayloadToInstant(rawAir, range.clipAfter) : rawAir;
     const temperatureRange = temperatureResult.status === "fulfilled"
       ? temperatureResult.value
       : { source: null, observations: [], notices: ["National temperature observations unavailable; using Open-Meteo fallback"] };
@@ -889,6 +916,7 @@ async function fetchLocationData(query, settings, signal) {
       data,
       notices: [
         ...(airResult.status === "rejected" ? [`${range.kind} air-quality data unavailable`] : []),
+        ...(range.clipAfter ? ["Today's elapsed hours use the Open-Meteo forecast feed and are labelled as forecast; future hours are excluded"] : []),
         ...(temperatureRange.notices || []),
         ...[coverageNotice].filter(Boolean)
       ]
@@ -1168,7 +1196,7 @@ function renderForecastRegion(svg, boundaryX, plotTop, plotRight, plotHeight) {
     "stroke-width": 2
   }));
   const nowLabel = svgNode("text", { x: boundaryX + 8, y: plotTop + 15, class: "forecast-axis-label" });
-  nowLabel.textContent = "NOW · FORECAST →";
+  nowLabel.textContent = "FORECAST DATA →";
   svg.append(nowLabel);
 }
 
