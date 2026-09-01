@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildLocationSuggestion, localTemperatureApiFallbackUrls, rankLocationCandidates, splitTimeline } from "../src/api.js";
+import { buildLocationSuggestion, clipHourlyPayloadToInstant, localTemperatureApiFallbackUrls, rankLocationCandidates, splitTimeline } from "../src/api.js";
 
 const now = new Date("2026-08-10T12:00:00");
 
@@ -15,14 +15,47 @@ test("continuous ranges split cleanly at the present-day boundary", () => {
   ]);
 });
 
-test("historical presets keep their existing all-past request", () => {
+test("past-only presets split today from the archive and exclude future hours", () => {
   assert.deepEqual(splitTimeline({
     preset: "7d",
     startDate: "2026-08-04",
     endDate: "2026-08-10"
   }, now), [
-    { kind: "historical", startDate: "2026-08-04", endDate: "2026-08-10" }
+    { kind: "historical", startDate: "2026-08-04", endDate: "2026-08-09" },
+    {
+      kind: "forecast",
+      startDate: "2026-08-10",
+      endDate: "2026-08-10",
+      forecastStartDate: "2026-08-10",
+      clipAfter: now.toISOString()
+    }
   ]);
+});
+
+test("fully elapsed historical windows remain archive-only", () => {
+  assert.deepEqual(splitTimeline({
+    preset: "15d",
+    startDate: "2026-07-25",
+    endDate: "2026-08-09"
+  }, now), [
+    { kind: "historical", startDate: "2026-07-25", endDate: "2026-08-09" }
+  ]);
+});
+
+test("current-day hourly payloads are clipped in the location timezone", () => {
+  const payload = {
+    utc_offset_seconds: -4 * 3600,
+    hourly: {
+      time: ["2026-08-10T07:00", "2026-08-10T08:00", "2026-08-10T09:00"],
+      temperature_2m: [18, 19, 20],
+      metadata: "kept"
+    }
+  };
+  assert.deepEqual(clipHourlyPayloadToInstant(payload, "2026-08-10T12:30:00Z").hourly, {
+    time: ["2026-08-10T07:00", "2026-08-10T08:00"],
+    temperature_2m: [18, 19],
+    metadata: "kept"
+  });
 });
 
 test("important populated cities outrank tiny exact-name settlements", () => {

@@ -165,7 +165,7 @@ function renderForecastRegion(svg, boundaryX, plotTop, plotRight, plotHeight) {
     "stroke-width": 2
   }));
   const nowLabel = svgNode("text", { x: boundaryX + 8, y: plotTop + 15, class: "forecast-axis-label" });
-  nowLabel.textContent = "NOW · FORECAST →";
+  nowLabel.textContent = "FORECAST DATA →";
   svg.append(nowLabel);
 }
 
