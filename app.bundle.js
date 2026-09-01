@@ -68,12 +68,12 @@ const METRIC_GROUPS = Object.freeze([
     id: "precipitation",
     eyebrow: "Precipitation",
     title: "Rain and snow",
-    description: "Precipitation is shown in millimetres and snowfall in centimetres.",
+    description: "Precipitation totals, snowfall, and forecast probability are shown as grouped bars for direct comparison between locations.",
     tableTitle: "Precipitation and snow summary",
     metrics: [
-      { id: "precipitationSum", title: "Precipitation sum", unit: "mm", digits: 1, floorZero: true },
-      { id: "snowfallSum", title: "Snowfall sum", unit: "cm", digits: 2, floorZero: true },
-      { id: "precipitationProbabilityMax", title: "Precipitation probability", unit: "%", digits: 0, floorZero: true, forecastOnly: true }
+      { id: "precipitationSum", title: "Precipitation sum", unit: "mm", digits: 1, floorZero: true, type: "bar" },
+      { id: "snowfallSum", title: "Snowfall sum", unit: "cm", digits: 2, floorZero: true, type: "bar" },
+      { id: "precipitationProbabilityMax", title: "Precipitation probability", unit: "%", digits: 0, floorZero: true, forecastOnly: true, type: "bar" }
     ],
     tableColumns: [
       { key: "precipitationSum", label: "Precip. (mm)", digits: 1 },
@@ -1115,7 +1115,7 @@ function chartScale(metric, series) {
   }
   const valueRange = high - low;
   const padding = valueRange * 0.06;
-  const rawMin = metric.floorZero ? Math.max(0, low - padding) : low - padding;
+  const rawMin = metric.type === "bar" ? 0 : metric.floorZero ? Math.max(0, low - padding) : low - padding;
   const rawMax = high + padding;
   const step = niceStep(rawMax - rawMin);
   const min = rawMin;
@@ -1125,6 +1125,15 @@ function chartScale(metric, series) {
   for (let value = firstTick, guard = 0; value <= max + step / 1000 && guard < 12; value += step, guard += 1) ticks.push(Number(value.toPrecision(12)));
   const tickDigits = Math.max(0, Math.min(3, -Math.floor(Math.log10(step))));
   return { min, max, ticks, tickDigits };
+}
+
+function groupedBarLayout(seriesCount, slotWidth, zoom = 1) {
+  const count = Math.max(1, Number(seriesCount) || 1);
+  const availableWidth = Math.max(1, Number(slotWidth) || 1);
+  const groupWidth = Math.min(availableWidth * 0.78, 54 * zoom);
+  const gap = count > 1 ? Math.min(2 * zoom, groupWidth / (count * 5)) : 0;
+  const barWidth = Math.max(0.35, (groupWidth - gap * (count - 1)) / count);
+  return { groupWidth, gap, barWidth, startOffset: -groupWidth / 2 };
 }
 
 function tooltipText(location, row, metric) {
@@ -1294,8 +1303,28 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
     width,
     height,
     role: "img",
-    "aria-label": `${metric.title} historical and forecast line chart`
+    "aria-label": `${metric.title} historical and forecast ${metric.type === "bar" ? "bar" : "line"} chart`
   });
+
+  if (metric.type === "bar" && series.some((location) => SERIES_STYLES[location.styleIndex % SERIES_STYLES.length].marker === "diamond")) {
+    const definitions = svgNode("defs");
+    series.forEach((location) => {
+      const style = SERIES_STYLES[location.styleIndex % SERIES_STYLES.length];
+      if (style.marker !== "diamond") return;
+      const pattern = svgNode("pattern", {
+        id: `bar-hatch-${location.styleIndex}`,
+        width: 6,
+        height: 6,
+        patternUnits: "userSpaceOnUse"
+      });
+      pattern.append(
+        svgNode("rect", { width: 6, height: 6, fill: "#fff" }),
+        svgNode("path", { d: "M-1 1 L1 -1 M0 6 L6 0 M5 7 L7 5", stroke: style.color, "stroke-width": 1.5, opacity: 0.75 })
+      );
+      definitions.append(pattern);
+    });
+    svg.append(definitions);
+  }
 
   renderThresholdBands(svg, metric, scale, yFor, margin.left, margin.top, plotWidth, plotHeight);
   renderForecastRegion(svg, forecastBoundaryX, margin.top, width - margin.right, plotHeight);
@@ -1326,7 +1355,41 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
     svg.append(label);
   });
 
-  for (const location of series) {
+  if (metric.type === "bar") {
+    const slotWidth = keys.length > 1
+      ? Math.abs(xFor(1) - xFor(0))
+      : Math.min(plotWidth, pointSpacingForKeys(keys) * zoom);
+    const barLayout = groupedBarLayout(series.length, slotWidth, zoom);
+    const baselineY = yFor(0);
+    series.forEach((location, locationIndex) => {
+      const style = SERIES_STYLES[location.styleIndex % SERIES_STYLES.length];
+      const isHighlighted = highlightIndex === location.styleIndex;
+      const rowByKey = new Map(location.rows.map((row) => [row.key, row]));
+      keys.forEach((key, index) => {
+        const row = rowByKey.get(key);
+        const value = row?.[metric.id];
+        if (!row || !Number.isFinite(value)) return;
+        const topY = yFor(Math.max(0, value));
+        const isForecast = row.dataKind === "forecast";
+        const patterned = style.marker === "diamond";
+        const bar = svgNode("rect", {
+          class: `chart-bar ${isForecast ? "is-forecast" : "is-historical"}`,
+          x: xFor(index) + barLayout.startOffset + locationIndex * (barLayout.barWidth + barLayout.gap),
+          y: Math.min(topY, baselineY - 1),
+          width: barLayout.barWidth,
+          height: Math.max(1, baselineY - topY),
+          rx: Math.min(1.5 * zoom, barLayout.barWidth / 3),
+          fill: patterned ? `url(#bar-hatch-${location.styleIndex})` : isForecast ? "#fff" : style.color,
+          stroke: style.color,
+          "stroke-width": isHighlighted ? 2.2 : 1.1,
+          "stroke-dasharray": lineDashForKind(row.dataKind),
+          opacity: isHighlighted ? 1 : isForecast ? 0.92 : 0.78
+        });
+        attachTooltip(bar, frame, tooltipText(location, row, metric));
+        svg.append(bar);
+      });
+    });
+  } else for (const location of series) {
     const style = SERIES_STYLES[location.styleIndex % SERIES_STYLES.length];
     const isHighlighted = highlightIndex === location.styleIndex;
     const lineWidth = metric.type === "range"
