@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildTableModel, chartScale, chartSegments, chartTickParts, combinedTemperatureMetric, lineDashForKind, tableHeatStyle, temperatureBandIndices, temperatureChartMetrics } from "../src/charts.js";
+import { buildTableModel, chartScale, chartSegments, chartTickParts, combinedTemperatureMetric, lineDashForKind, tableHeatStyle, temperatureBandIndices, temperatureChartMetrics, temperatureSelection, tooltipText } from "../src/charts.js";
 
 const seriesWith = (key, values) => [{
   rows: values.map((value) => ({ [key]: value }))
@@ -130,6 +130,32 @@ test("band selection uses stable location IDs and adapts to visible count", () =
   assert.deepEqual(temperatureBandIndices(series.slice(1), 1), [4, 8]);
   assert.deepEqual(temperatureBandIndices(series.slice(2), null), [8]);
   assert.deepEqual(temperatureBandIndices([], null), []);
+});
+
+test("temperature priority previews only while unlocked and toggles on explicit clicks", () => {
+  let state = { priority: 0, locked: null };
+  state = temperatureSelection(state, 4);
+  assert.deepEqual(state, { priority: 4, locked: null });
+  state = temperatureSelection(state, 0, true);
+  assert.deepEqual(state, { priority: 0, locked: 0 });
+  // A valid zero ID must block hover, focus, and restore attempts alike.
+  assert.deepEqual(temperatureSelection(state, 8), state);
+  assert.deepEqual(temperatureSelection(state, 4), state);
+  state = temperatureSelection(state, 0, true);
+  assert.deepEqual(state, { priority: 0, locked: null });
+  assert.deepEqual(temperatureSelection(state, 8), { priority: 8, locked: null });
+  state = temperatureSelection(state, 4, true);
+  state = temperatureSelection(state, 8, true);
+  assert.deepEqual(state, { priority: 8, locked: 8 });
+});
+
+test("combined readout omits generic grid and range-label clutter but keeps useful context", () => {
+  const row = { label: "19/09/2026", dataKind: "forecast", forecastConfidence: "higher", temperatureMin: 10, temperatureAvg: 15, temperatureMax: 20 };
+  const text = tooltipText({ label: "Berlin" }, row, combinedTemperatureMetric());
+  assert.doesNotMatch(text, /Source:|Range shown:/);
+  assert.match(text, /Berlin.*19\/09\/2026.*Forecast.*higher confidence.*Min.*Avg.*Max/);
+  assert.match(tooltipText({ label: "Berlin" }, { ...row, temperatureStationName: "Tempelhof" }, combinedTemperatureMetric()), /Station: Tempelhof/);
+  assert.match(tooltipText({ label: "Berlin" }, { ...row, temperatureMin: null }, combinedTemperatureMetric()), /full range unavailable/);
 });
 
 test("range segments break at absent, incomplete, or reversed ranges", () => {

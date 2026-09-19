@@ -203,9 +203,12 @@ tbody tr.is-location-start > th, tbody tr.is-location-start > td { border-top: 4
 .combined-location { display: inline-flex; align-items: center; gap: .4rem; min-height: 2.5rem; max-width: 100%; padding: .4rem .65rem; border: 1px solid var(--line); background: #fff; font-size: .75rem; text-align: left; overflow-wrap: anywhere; }
 .combined-location[aria-pressed="true"] { border-color: var(--green); box-shadow: inset 0 -2px var(--green); }
 .combined-location.is-previewed { background: #e3efe8; }
+.combined-lock-badge { font-size: .65rem; font-weight: 600; color: var(--green); }
+.combined-lock-badge[hidden] { display: none; }
+.combined-lock-status { margin: 0; font-size: .72rem; color: var(--green); }
 .combined-date { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .7rem; min-width: 0; font-size: .72rem; }
 .combined-date select { max-width: 100%; padding: .4rem .6rem; border-color: var(--line); background: #fff; font-size: .75rem; }
-.combined-readout { margin: 0; padding: .65rem; min-height: 5.5em; border-left: 3px solid var(--green); background: #fff; color: var(--ink); font-size: .75rem; overflow-wrap: anywhere; }
+.combined-readout { margin: 0; padding: .5rem .65rem; min-height: 3.5em; border-left: 3px solid var(--green); background: #fff; color: var(--ink); font-size: .75rem; overflow-wrap: anywhere; }
 .temperature-band { pointer-events: none; }
 .combined-chart .chart-series { cursor: pointer; }
 .popout-body.combined-chart { grid-template-rows: auto minmax(230px, 1fr) auto; overflow: auto; cursor: auto; }

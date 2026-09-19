@@ -87,14 +87,14 @@ function validRange(row, minKey, maxKey) {
   return row && Number.isFinite(row[minKey]) && Number.isFinite(row[maxKey]) && row[minKey] <= row[maxKey];
 }
 
-function tooltipText(location, row, metric) {
+export function tooltipText(location, row, metric) {
   const forecastContext = row.dataKind === "forecast"
     ? `Forecast · ${row.forecastConfidence || "unknown"} confidence (lead-time guide) · `
     : "Historical · ";
   if (metric.type === "range" || metric.type === "envelope") {
     const sourceContext = row.temperatureStationName
       ? ` · Station: ${row.temperatureStationName}${Number.isFinite(row.temperatureStationDistanceKm) ? ` (${formatNumber(row.temperatureStationDistanceKm, 1)} km)` : ""}`
-      : " · Source: Open-Meteo grid";
+      : metric.type === "envelope" ? "" : " · Source: Open-Meteo grid";
     if (!validRange(row, metric.minKey, metric.maxKey)) {
       return `${location.label} · ${row.label} · ${forecastContext}Min ${formatNumber(row[metric.minKey], metric.digits)} · Avg ${formatNumber(row[metric.id], metric.digits)} · Max ${formatNumber(row[metric.maxKey], metric.digits)} ${metric.unit} · full range unavailable${sourceContext}`;
     }
@@ -225,6 +225,12 @@ export function combinedTemperatureMetric(granularity = "day") {
 export function temperatureBandIndices(series, selectedIndex) {
   if (series.length <= 2) return series.map((location) => location.styleIndex);
   return [series.some((location) => location.styleIndex === selectedIndex) ? selectedIndex : series[0].styleIndex];
+}
+
+// Preview/focus never overrides a lock; an explicit click toggles or transfers it.
+export function temperatureSelection(state, index, toggle = false) {
+  if (toggle) return { priority: index, locked: state.locked === index ? null : index };
+  return { ...state, priority: state.locked ?? index };
 }
 
 // Break at missing buckets; bridge adjacent historical/forecast samples only.
@@ -458,7 +464,7 @@ export function renderChartFrame(container, metric, series, highlightIndex, { zo
   }, { passive: true });
   if (combined) {
     const controls = create("div", "combined-controls");
-    const hint = create("p", "combined-hint", `Line: average. Band: minimum–maximum within each time bucket, not forecast uncertainty. Dashed lines: forecast. ${series.length <= 2 ? "Both ranges are visible." : "Select a location to pin its range; hover or focus to preview another."}`);
+    const hint = create("p", "combined-hint", `Line: average. Band: minimum–maximum within each time bucket, not forecast uncertainty. Dashed lines: forecast. ${series.length <= 2 ? "Both ranges are visible." : "Only the priority location's range is shown."}`);
     if (series.length === 1) hint.textContent = hint.textContent.replace("Both ranges", "The range").replace("are visible", "is visible");
     const locations = create("div", "combined-locations");
     locations.setAttribute("role", "group");
@@ -471,47 +477,63 @@ export function renderChartFrame(container, metric, series, highlightIndex, { zo
       option.value = key;
       dateSelect.append(option);
     });
-    let pinned = series.some((location) => location.styleIndex === metric.rangeFocus) ? metric.rangeFocus
+    const savedFocusVisible = series.some((location) => location.styleIndex === metric.rangeFocus);
+    let preferred = savedFocusVisible ? metric.rangeFocus
       : series.some((location) => location.styleIndex === highlightIndex) ? highlightIndex : series[0].styleIndex;
     let focused = null;
-    let current = pinned;
+    let selection = { priority: preferred, locked: savedFocusVisible && metric.rangeLocked ? preferred : null };
+    const lockStatus = create("p", "combined-lock-status");
+    lockStatus.setAttribute("role", "status");
     dateSelect.value = keys.includes(metric.inspectKey) ? metric.inspectKey : keys[0];
     const readout = create("p", "combined-readout");
     readout.setAttribute("role", "status");
     readout.setAttribute("aria-live", "polite");
     const buttons = new Map();
-    const update = (index) => {
-      current = index;
+    const update = (index, toggle = false) => {
+      selection = temperatureSelection(selection, index, toggle);
+      index = selection.priority;
       const visibleBands = temperatureBandIndices(series, index);
       bandNodes.forEach((node, id) => { node.style.display = visibleBands.includes(id) ? "" : "none"; });
       lineNodes.forEach((node, id) => { node.style.opacity = series.length > 2 && id !== index ? ".5" : "1"; });
       buttons.forEach((button, id) => {
-        button.setAttribute("aria-pressed", String(id === pinned));
+        const locked = id === selection.locked;
+        button.setAttribute("aria-pressed", String(locked));
+        button.querySelector(".combined-lock-badge").hidden = !locked;
+        button.setAttribute("aria-label", `${locked ? "Unlock" : "Lock"} priority location: ${series.find((entry) => entry.styleIndex === id).label}`);
         button.classList.toggle("is-previewed", id === index);
       });
+      const lockText = selection.locked === null
+        ? "Hover or focus to preview. Click a location to lock it."
+        : `Priority locked to ${locationDisplayName(series.find((entry) => entry.styleIndex === selection.locked), series)}. Click it again to unlock, or click another location to switch the lock.`;
+      if (lockStatus.textContent !== lockText) lockStatus.textContent = lockText;
       const location = series.find((entry) => entry.styleIndex === index);
       const row = location.rows.find((entry) => entry.key === dateSelect.value);
       readout.textContent = row ? tooltipText(location, row, metric) : `${location.label} · ${dateSelect.selectedOptions[0].textContent} · No data for this period.`;
       const hasRange = location.rows.some((entry) => validRange(entry, metric.minKey, metric.maxKey));
-      if (series.length > 2 && hasRange) readout.textContent += ` · Range shown: ${locationDisplayName(location, series)}.`;
-      if (!hasRange) readout.textContent += " No min–max range is available for this location; average values remain visible.";
+      if (!hasRange) readout.textContent += " · No min–max range is available for this location; average values remain visible.";
     };
-    inspectPoint = (index, bucketIndex, pin = false) => {
+    inspectPoint = (index, bucketIndex, toggle = false) => {
+      if (!toggle && selection.locked !== null && selection.locked !== index) return;
       if (Number.isInteger(bucketIndex)) dateSelect.value = keys[bucketIndex];
       metric.inspectKey = dateSelect.value;
-      if (pin) { pinned = index; metric.rangeFocus = index; }
-      update(index);
+      update(index, toggle);
+      if (toggle) {
+        preferred = index;
+        metric.rangeFocus = index;
+        metric.rangeLocked = selection.locked !== null;
+      }
     };
-    restoreRange = () => update(focused ?? pinned);
+    restoreRange = () => update(focused ?? preferred);
     for (const location of series) {
       const button = create("button", "combined-location");
       button.type = "button";
       button.dataset.rangeLocation = location.styleIndex;
-      button.setAttribute("aria-label", `Inspect ${location.label}`);
       const style = SERIES_STYLES[location.styleIndex % SERIES_STYLES.length];
       const swatch = create("i", `comparison-marker is-${style.marker}`);
       swatch.style.background = style.color;
-      button.append(swatch, document.createTextNode(locationDisplayName(location, series)));
+      const badge = create("span", "combined-lock-badge", "Locked · click to unlock");
+      badge.hidden = true;
+      button.append(swatch, document.createTextNode(locationDisplayName(location, series)), badge);
       button.addEventListener("pointerenter", (event) => { if (event.pointerType !== "touch") update(location.styleIndex); });
       button.addEventListener("pointerleave", () => restoreRange());
       button.addEventListener("focus", () => { focused = location.styleIndex; update(focused); });
@@ -522,14 +544,14 @@ export function renderChartFrame(container, metric, series, highlightIndex, { zo
     }
     dateSelect.addEventListener("change", () => {
       metric.inspectKey = dateSelect.value;
-      update(current);
+      update(selection.priority);
       scroll.scrollLeft = Math.max(0, xFor(keys.indexOf(dateSelect.value)) - scroll.clientWidth / 2);
     });
     dateLabel.append(dateSelect);
-    controls.append(hint, locations, dateLabel);
+    controls.append(hint, locations, lockStatus, dateLabel);
     container.prepend(controls);
     container.append(readout);
-    update(pinned);
+    update(preferred);
   }
   return frame;
 }
@@ -730,7 +752,7 @@ function renderGroup(group, series, settings, onPopout, onTemperatureViewChange)
       radio.name = "temperature-view";
       radio.value = value;
       radio.dataset.temperatureView = value;
-      radio.checked = value === (settings.temperatureView || "separate");
+      radio.checked = value === (settings.temperatureView === "separate" ? "separate" : "combined");
       radio.addEventListener("change", () => onTemperatureViewChange(value));
       field.append(radio, document.createTextNode(label));
       modes.append(field);
@@ -755,7 +777,7 @@ function renderGroup(group, series, settings, onPopout, onTemperatureViewChange)
     article.append(tableHead);
     article.append(renderTable(displayGroup, series, settings.tableGradient));
   } else {
-    if (group.id === "temperature" && settings.temperatureView !== "combined") {
+    if (group.id === "temperature" && settings.temperatureView === "separate") {
       article.append(create("p", "method-note", "Minimum, average, and maximum are shown below on three aligned charts with the same temperature scale."));
       const key = create("div", "comparison-key");
       key.setAttribute("aria-label", "Location colors");
@@ -771,7 +793,7 @@ function renderGroup(group, series, settings, onPopout, onTemperatureViewChange)
       article.append(key);
     }
     const metrics = group.id === "temperature"
-      ? settings.temperatureView === "combined" ? [combinedTemperatureMetric(settings.granularity)] : temperatureChartMetrics(series)
+      ? settings.temperatureView === "separate" ? temperatureChartMetrics(series) : [combinedTemperatureMetric(settings.granularity)]
       : displayGroup.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
     const grid = create("div", `chart-grid ${metrics.length === 1 || group.id === "temperature" ? "single" : ""}`);
     metrics.forEach((metric) => grid.append(renderChartCard(metric, series, settings.highlightLocation, onPopout)));
