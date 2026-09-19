@@ -186,7 +186,8 @@ function createDefaultSettings(now = new Date()) {
     endDate: shiftDate(today, 6),
     granularity: "day",
     view: "graph",
-    tableGradient: false
+    tableGradient: false,
+    temperatureMeasures: null
   };
 }
 
@@ -211,8 +212,18 @@ function normalizeSettings(candidate = {}, now = new Date()) {
     endDate: isDateString(candidate.endDate) ? candidate.endDate : fallback.endDate,
     granularity: ["day", "12h", "6h", "3h", "1h", "30m"].includes(candidate.granularity) ? candidate.granularity : fallback.granularity,
     view: ["graph", "table"].includes(candidate.view) ? candidate.view : fallback.view,
-    tableGradient: candidate.tableGradient === true || candidate.tableGradient === 1 || candidate.tableGradient === "1" || candidate.tableGradient === "true"
+    tableGradient: candidate.tableGradient === true || candidate.tableGradient === 1 || candidate.tableGradient === "1" || candidate.tableGradient === "true",
+    temperatureMeasures: normalizeTemperatureMeasures(candidate.temperatureMeasures)
   };
+}
+
+function normalizeTemperatureMeasures(value) {
+  const selected = ["min", "avg", "max"].filter((key) => Array.isArray(value) && value.includes(key));
+  return selected.length ? selected : null;
+}
+
+function resolveTemperatureMeasures(value, visibleCount) {
+  return normalizeTemperatureMeasures(value) || (visibleCount === 1 ? ["min", "avg", "max"] : ["avg"]);
 }
 
 function syncPresetDates(settings, now = new Date()) {
@@ -253,7 +264,8 @@ function settingsFromUrl(url, now = new Date()) {
     endDate: params.get("end"),
     granularity: params.get("granularity"),
     view: params.get("view"),
-    tableGradient: params.get("gradient")
+    tableGradient: params.get("gradient"),
+    temperatureMeasures: params.get("temperature")?.split(",")
   }, now);
 }
 
@@ -272,6 +284,8 @@ function buildShareUrl(settings, baseUrl) {
   url.searchParams.set("granularity", settings.granularity);
   url.searchParams.set("view", settings.view);
   url.searchParams.set("gradient", settings.tableGradient ? "1" : "0");
+  const measures = normalizeTemperatureMeasures(settings.temperatureMeasures);
+  if (measures) url.searchParams.set("temperature", measures.join(","));
   if (Number.isInteger(settings.highlightLocation)) url.searchParams.set("highlight", String(settings.highlightLocation));
   return url.toString();
 }
@@ -1070,27 +1084,14 @@ function lineDashForKind(dataKind) {
   return dataKind === "forecast" ? "8 5" : "";
 }
 
-const TABLE_HEAT_STOPS = [
-  { position: 0, color: [255, 255, 255] },
-  { position: 0.2, color: [43, 131, 186] },
-  { position: 0.4, color: [254, 224, 139] },
-  { position: 0.6, color: [253, 174, 97] },
-  { position: 0.8, color: [215, 48, 39] },
-  { position: 1, color: [118, 42, 131] }
-];
+const TABLE_HEAT_COLORS = ["#f8fafc", "#edf4fb", "#dceaf6", "#c5def0", "#a8cde6"];
 
 function tableHeatStyle(value, domain) {
   if (!Number.isFinite(value) || !domain || !Number.isFinite(domain.min) || !Number.isFinite(domain.max) || domain.min === domain.max) return null;
   const position = Math.max(0, Math.min(1, (value - domain.min) / (domain.max - domain.min)));
-  const upperIndex = TABLE_HEAT_STOPS.findIndex((stop) => stop.position >= position);
-  const upper = TABLE_HEAT_STOPS[Math.max(1, upperIndex)];
-  const lower = TABLE_HEAT_STOPS[Math.max(0, upperIndex - 1)];
-  const segmentPosition = (position - lower.position) / (upper.position - lower.position);
-  const color = lower.color.map((channel, index) => Math.round(channel + (upper.color[index] - channel) * segmentPosition));
-  const brightness = (color[0] * 299 + color[1] * 587 + color[2] * 114) / 1000;
   return {
-    backgroundColor: `rgb(${color.join(" ")})`,
-    textColor: brightness < 150 ? "#fff" : "#111"
+    backgroundColor: TABLE_HEAT_COLORS[Math.min(4, Math.floor(position * 5))],
+    textColor: "#162b3d"
   };
 }
 
@@ -1140,7 +1141,10 @@ function tooltipText(location, row, metric) {
     }
     return `${location.label} · ${row.label} · ${forecastContext}Min ${formatNumber(row[metric.minKey], metric.digits)} ${metric.unit} · Avg ${formatNumber(row[metric.id], metric.digits)} ${metric.unit} · Max ${formatNumber(row[metric.maxKey], metric.digits)} ${metric.unit}${sourceContext}`;
   }
-  return `${location.label} · ${row.label} · ${forecastContext}${formatNumber(row[metric.id], metric.digits)} ${metric.unit}`;
+  const source = metric.id.startsWith("temperature")
+    ? row.temperatureStationName ? ` · Station: ${row.temperatureStationName}` : " · Source: Open-Meteo grid"
+    : "";
+  return `${location.label} · ${row.label} · ${forecastContext}${metric.title}: ${formatNumber(row[metric.id], metric.digits)} ${metric.unit}${source}`;
 }
 
 function attachTooltip(target, frame, text) {
@@ -1269,6 +1273,13 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
     scroll.append(create("p", "empty-state", "No values are available for this chart."));
     return frame;
   }
+  if (!series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id])))) {
+    const isExtreme = ["temperatureMin", "temperatureMax"].includes(metric.id);
+    scroll.append(create("p", "empty-state", isExtreme
+      ? "No temperature extrema are available for these buckets. A single sample cannot establish a minimum or maximum. Try Average, a longer time bucket, or a different date range."
+      : "No values are available for this indicator in the selected window."));
+    return frame;
+  }
 
   const baseWidth = Math.max(680, 88 + keys.length * pointSpacingForKeys(keys));
   const width = Math.round(baseWidth * zoom);
@@ -1276,7 +1287,7 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
   const margin = { top: 20 * zoom, right: 26 * zoom, bottom: 64 * zoom, left: 62 * zoom };
   const plotWidth = width - margin.left - margin.right;
   const plotHeight = height - margin.top - margin.bottom;
-  const scale = chartScale(metric, series);
+  const scale = metric.sharedScale || chartScale(metric, series);
   const yFor = (value) => margin.top + (scale.max - value) / (scale.max - scale.min) * plotHeight;
   const edgeInset = Math.min(40 * zoom, plotWidth / 4);
   const xFor = (index) => margin.left + (keys.length === 1 ? plotWidth / 2 : edgeInset + index / (keys.length - 1) * (plotWidth - edgeInset * 2));
@@ -1460,21 +1471,27 @@ function buildTableModel(group, series) {
   return { buckets, heatDomains, metrics, rows };
 }
 
+function locationDisplayName(location, series) {
+  const shortName = (location.query || location.label).split(",")[0];
+  const collisions = series.filter((other) => (other.query || other.label).split(",")[0] === shortName);
+  return collisions.length > 1 ? location.label : shortName;
+}
+
 function renderTable(group, series, useGradient) {
   const block = create("div", "table-block");
   const wrapper = create("div", "table-scroll");
   const table = create("table");
-  const caption = create("caption", null, group.tableTitle);
+  const caption = create("caption", "sr-only", group.tableTitle);
   const model = buildTableModel(group, series);
   if (useGradient) {
     const legend = create("div", "table-heat-legend");
     legend.setAttribute("role", "img");
-    legend.setAttribute("aria-label", "Relative color scale from very low values in white through blue, yellow, orange, and red to very high values in purple");
+    legend.setAttribute("aria-label", "Five soft blue shades, from lower to higher values within each indicator. Not a health or risk scale.");
     legend.append(
-      create("span", null, "Very low"),
+      create("span", null, "Lower"),
       create("i", "table-heat-ramp"),
-      create("span", null, "Very high"),
-      create("small", "table-heat-note", "Scaled within each indicator across the visible data; comparable temperature and wind rows share a scale.")
+      create("span", null, "Higher"),
+      create("small", "table-heat-note", "Relative to visible values, separately for each indicator. Temperature and wind measures share their respective scales. Not a risk scale.")
     );
     block.append(legend);
   }
@@ -1494,7 +1511,11 @@ function renderTable(group, series, useGradient) {
     const cell = create("th", classes.join(" "), bucket.label);
     cell.scope = "col";
     if (isForecast) {
-      cell.append(create("small", "forecast-column-badge", `Forecast · ${bucket.forecastConfidence || "unknown"} confidence`));
+      cell.append(create("small", "forecast-column-badge", "Forecast"));
+      const confidence = `${bucket.forecastConfidence || "unknown"} confidence (lead-time guide)`;
+      cell.append(create("small", "forecast-confidence", `${bucket.forecastConfidence || "unknown"} confidence`));
+      cell.title = confidence;
+      cell.setAttribute("aria-label", `${bucket.label} · Forecast · ${confidence}`);
     }
     headingRow.append(cell);
   });
@@ -1507,13 +1528,18 @@ function renderTable(group, series, useGradient) {
     if (tableRow.metricIndex === 0) {
       const station = group.id === "temperature" ? tableRow.location.temperatureSource : null;
       const locationCell = create("th", "table-location-heading");
-      locationCell.append(create("strong", null, station?.stationName || tableRow.location.label));
+      const shortName = locationDisplayName(tableRow.location, series);
+      locationCell.append(create("strong", null, shortName));
+      locationCell.title = tableRow.location.label;
+      const sourceDetails = create("details", "table-source-details");
+      sourceDetails.append(create("summary", null, "Details"), create("small", "table-location-context", tableRow.location.label));
       if (station?.stationName) {
         const distance = Number.isFinite(station.stationDistanceKm) ? ` · ${formatNumber(station.stationDistanceKm, 1)} km away` : "";
-        locationCell.append(create("small", "table-location-context", `${tableRow.location.label}${distance}`));
+        sourceDetails.append(create("small", "table-location-context", `${station.stationName}${distance}`));
       } else if (group.id === "temperature") {
-        locationCell.append(create("small", "table-location-context", `${tableRow.location.label} · Open-Meteo grid fallback`));
+        sourceDetails.append(create("small", "table-location-context", "Open-Meteo grid fallback"));
       }
+      locationCell.append(sourceDetails);
       locationCell.scope = "rowgroup";
       locationCell.rowSpan = model.metrics.length;
       rowNode.append(locationCell);
@@ -1527,11 +1553,13 @@ function renderTable(group, series, useGradient) {
       if (bucket.dataKind === "forecast") classes.push("forecast-table-column");
       if (bucketIndex === firstForecastIndex) classes.push("is-first-forecast-column");
       const cell = create("td", classes.join(" "), tableRow.metric.formatter === "direction" ? formatDirection(value) : formatNumber(value, tableRow.metric.digits));
+      if (bucket.dataKind === "forecast") cell.title = `Forecast · ${bucket.forecastConfidence || "unknown"} confidence (lead-time guide)`;
       if (group.id === "temperature") {
         const sourceRow = tableRow.sourceRows[bucketIndex];
-        cell.title = sourceRow?.temperatureStationName
+        const sourceTitle = sourceRow?.temperatureStationName
           ? `${sourceRow.temperatureProviderName || "Station"}: ${sourceRow.temperatureStationName}`
           : "Open-Meteo grid fallback; no station range for this bucket";
+        cell.title = [cell.title, sourceTitle].filter(Boolean).join(" · ");
       }
       const heatStyle = useGradient ? tableHeatStyle(value, tableRow.heatDomain) : null;
       if (heatStyle) {
@@ -1544,12 +1572,52 @@ function renderTable(group, series, useGradient) {
     body.append(rowNode);
   });
   table.append(caption, head, body);
+  wrapper.tabIndex = 0;
+  wrapper.setAttribute("role", "region");
+  wrapper.setAttribute("aria-label", `${group.tableTitle}. Scroll for more dates and locations; column and row headings stay visible.`);
   wrapper.append(table);
   block.append(wrapper);
   return block;
 }
 
-function renderGroup(group, series, settings, onPopout) {
+function temperatureChartMetrics(selection, series) {
+  const measures = resolveTemperatureMeasures(selection, series.length);
+  const definitions = {
+    min: { id: "temperatureMin", title: "Minimum temperature" },
+    avg: { id: "temperatureAvg", title: "Average temperature" },
+    max: { id: "temperatureMax", title: "Maximum temperature" }
+  };
+  // Small multiples use one scale, derived only from the selected measures.
+  const scaleSeries = [{ rows: series.flatMap((location) => location.rows.flatMap((row) => measures.map((key) => ({ value: row[definitions[key].id] })))) }];
+  const sharedScale = chartScale({ id: "value", digits: 1 }, scaleSeries);
+  return measures.map((key) => ({ ...definitions[key], unit: "°C", digits: 1, sharedScale }));
+}
+
+function renderTemperatureControls(series, settings, onChange) {
+  const controls = create("fieldset", "temperature-controls");
+  controls.append(create("legend", null, "Temperature measures"));
+  const measures = resolveTemperatureMeasures(settings.temperatureMeasures, series.length);
+  for (const [key, label] of [["min", "Minimum"], ["avg", "Average"], ["max", "Maximum"]]) {
+    const field = create("label");
+    const input = create("input");
+    input.type = "checkbox";
+    input.checked = measures.includes(key);
+    input.dataset.temperatureMeasure = key;
+    input.disabled = measures.length === 1 && input.checked;
+    input.addEventListener("change", () => onChange(input.checked ? [...measures, key] : measures.filter((value) => value !== key), key));
+    field.append(input, document.createTextNode(label));
+    controls.append(field);
+  }
+  const automatic = create("button", "text-button", "Automatic");
+  automatic.type = "button";
+  automatic.dataset.temperatureAutomatic = "";
+  automatic.setAttribute("aria-pressed", String(!settings.temperatureMeasures));
+  automatic.addEventListener("click", () => onChange(null, "auto"));
+  controls.append(automatic, create("small", null, `${settings.temperatureMeasures ? "Manual selection." : "Automatic selection."} One location: all three; multiple locations: average. At least one measure stays selected. Separate charts share a scale.`));
+  return controls;
+}
+
+function renderGroup(group, series, settings, onPopout, onTemperatureChange) {
   const displayGroup = group;
   const article = create("article", "panel metric-panel");
   const intro = create("div", "panel-intro");
@@ -1565,20 +1633,43 @@ function renderGroup(group, series, settings, onPopout) {
   if (!series.length) {
     article.append(create("p", "empty-state", "Load at least one visible location to populate this panel."));
   } else if (settings.view === "table") {
+    const tableHead = create("div", "chart-head table-head");
+    tableHead.append(create("h3", null, group.tableTitle));
+    const expand = create("button", "text-button", "Pop out");
+    expand.type = "button";
+    expand.setAttribute("aria-label", `Pop out ${group.tableTitle}`);
+    expand.addEventListener("click", () => onPopout({ tableGroup: group }, expand));
+    tableHead.append(expand);
+    article.append(tableHead);
     article.append(renderTable(displayGroup, series, settings.tableGradient));
   } else {
-    const metrics = displayGroup.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
-    const grid = create("div", `chart-grid ${metrics.length === 1 ? "single" : ""}`);
+    if (group.id === "temperature") {
+      article.append(renderTemperatureControls(series, settings, onTemperatureChange));
+      const key = create("div", "comparison-key");
+      key.setAttribute("aria-label", "Location colors");
+      for (const location of series) {
+        const style = SERIES_STYLES[location.styleIndex % SERIES_STYLES.length];
+        const item = create("span");
+        const marker = create("i", `comparison-marker is-${style.marker}`);
+        marker.style.background = style.color;
+        item.title = location.label;
+        item.append(marker, document.createTextNode(locationDisplayName(location, series)));
+        key.append(item);
+      }
+      article.append(key);
+    }
+    const metrics = group.id === "temperature" ? temperatureChartMetrics(settings.temperatureMeasures, series) : displayGroup.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
+    const grid = create("div", `chart-grid ${metrics.length === 1 || group.id === "temperature" ? "single" : ""}`);
     metrics.forEach((metric) => grid.append(renderChartCard(metric, series, settings.highlightLocation, onPopout)));
     article.append(grid);
   }
   return article;
 }
 
-function renderDashboard(container, series, settings, onPopout) {
+function renderDashboard(container, series, settings, onPopout, onTemperatureChange) {
   const sourcePanel = container.querySelector("#sources-panel");
   container.querySelectorAll(".metric-panel").forEach((panel) => panel.remove());
-  METRIC_GROUPS.forEach((group) => container.insertBefore(renderGroup(group, series, settings, onPopout), sourcePanel));
+  METRIC_GROUPS.forEach((group) => container.insertBefore(renderGroup(group, series, settings, onPopout, onTemperatureChange), sourcePanel));
 }
 
 function createChartPopout(dialog) {
@@ -1595,6 +1686,10 @@ function createChartPopout(dialog) {
 
   const rerender = () => {
     if (!state) return;
+    if (state.tableGroup) {
+      body.replaceChildren(renderTable(state.tableGroup, state.series, state.useGradient));
+      return;
+    }
     renderChartFrame(body, state.metric, state.series, state.highlightIndex, { zoom: state.zoom });
     reset.disabled = state.zoom === 1;
     zoomOut.disabled = state.zoom <= 0.7;
@@ -1621,6 +1716,7 @@ function createChartPopout(dialog) {
   dialog.addEventListener("close", () => trigger?.focus());
   body.addEventListener("pointerdown", (event) => {
     const scroll = body.querySelector(".chart-scroll");
+    if (!scroll || event.pointerType !== "mouse" || event.button !== 0) return;
     drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: scroll.scrollLeft, top: scroll.scrollTop, scroll };
     body.setPointerCapture?.(event.pointerId);
   });
@@ -1639,11 +1735,135 @@ function createChartPopout(dialog) {
       trigger = sourceButton;
       title.textContent = metric.title;
       unit.textContent = `Magnified visualization · ${metric.unit}`;
+      dialog.classList.remove("is-table-popout");
+      [zoomIn, zoomOut, reset].forEach((button) => { button.hidden = false; });
       rerender();
       dialog.showModal();
       zoomIn.focus();
+    },
+    openTable(group, series, useGradient, sourceButton) {
+      state = { tableGroup: group, series, useGradient };
+      trigger = sourceButton;
+      title.textContent = group.tableTitle;
+      unit.textContent = "Expanded table · scroll for more dates";
+      dialog.classList.add("is-table-popout");
+      [zoomIn, zoomOut, reset].forEach((button) => { button.hidden = true; });
+      rerender();
+      dialog.showModal();
+      close.focus();
     }
   };
+}
+
+
+/* src/calendar.js */
+function calendarDays(year, month) {
+  const first = new Date(year, month, 1, 12);
+  const offset = (first.getDay() + 6) % 7;
+  return Array.from({ length: 42 }, (_, index) => formatDate(new Date(year, month, 1 - offset + index, 12)));
+}
+
+// A local calendar also works in embedded browsers that do not expose a native date picker.
+function setupDatePickers() {
+  const dialog = document.createElement("dialog");
+  dialog.className = "calendar-dialog";
+  dialog.setAttribute("aria-labelledby", "calendar-title");
+  dialog.innerHTML = `<header class="calendar-head"><h2 id="calendar-title">Choose date</h2><button type="button" data-calendar-close aria-label="Close calendar">×</button></header>
+    <div class="calendar-navigation"><button type="button" data-month-back aria-label="Previous month">‹</button><select aria-label="Month"></select><input type="number" aria-label="Year" min="1900" max="9999"><button type="button" data-month-next aria-label="Next month">›</button></div>
+    <p class="sr-only" data-calendar-month aria-live="polite"></p><div class="calendar-weekdays" aria-hidden="true"><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span><span>Su</span></div>
+    <div class="calendar-days" role="group" aria-label="Days. Use arrow keys to navigate; Enter to select."></div><footer><button type="button" data-calendar-today>Today</button><small>Arrow keys move by day; Page Up/Down changes month.</small></footer>`;
+  document.body.append(dialog);
+  const monthSelect = dialog.querySelector("select");
+  const yearInput = dialog.querySelector("input");
+  const grid = dialog.querySelector(".calendar-days");
+  let today = formatDate(new Date());
+  let active = today;
+  let selected = null;
+  let input;
+  let trigger;
+  for (let month = 0; month < 12; month++) {
+    const option = document.createElement("option");
+    option.value = String(month);
+    option.textContent = new Date(2024, month, 1).toLocaleDateString("en-GB", { month: "long" });
+    monthSelect.append(option);
+  }
+  const render = (focusDay = false) => {
+    const date = new Date(`${active}T12:00:00`);
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    monthSelect.value = String(month);
+    yearInput.value = String(year);
+    dialog.querySelector("[data-calendar-month]").textContent = date.toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+    grid.replaceChildren();
+    for (const iso of calendarDays(year, month)) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = String(Number(iso.slice(8)));
+      button.dataset.date = iso;
+      button.tabIndex = iso === active ? 0 : -1;
+      button.classList.toggle("outside-month", Number(iso.slice(5, 7)) !== month + 1);
+      button.classList.toggle("selected-day", iso === selected);
+      button.setAttribute("aria-pressed", String(iso === selected));
+      button.setAttribute("aria-label", new Date(`${iso}T12:00:00`).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" }));
+      if (iso === today) button.setAttribute("aria-current", "date");
+      button.addEventListener("click", () => selectDate(iso));
+      grid.append(button);
+    }
+    if (focusDay) grid.querySelector(`[data-date="${active}"]`)?.focus();
+  };
+  const selectDate = (iso) => {
+    input.value = formatDisplayDate(iso);
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    dialog.close();
+  };
+  const changeMonth = (delta, focus = false) => {
+    const date = new Date(`${active}T12:00:00`);
+    const target = new Date(date.getFullYear(), date.getMonth() + delta, 1, 12);
+    const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+    target.setDate(Math.min(date.getDate(), lastDay));
+    active = formatDate(target);
+    render(focus);
+  };
+  dialog.querySelector("[data-month-back]").addEventListener("click", () => changeMonth(-1));
+  dialog.querySelector("[data-month-next]").addEventListener("click", () => changeMonth(1));
+  dialog.querySelector("[data-calendar-close]").addEventListener("click", () => dialog.close());
+  dialog.querySelector("[data-calendar-today]").addEventListener("click", () => selectDate(formatDate(new Date())));
+  const changeDisplayedMonth = () => {
+    const year = Number(yearInput.value);
+    if (!Number.isInteger(year) || year < 1900 || year > 9999) return;
+    active = formatDate(new Date(year, Number(monthSelect.value), 1, 12));
+    render();
+  };
+  monthSelect.addEventListener("change", changeDisplayedMonth);
+  yearInput.addEventListener("change", changeDisplayedMonth);
+  grid.addEventListener("keydown", (event) => {
+    const offsets = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
+    if (event.key in offsets) active = shiftDate(active, offsets[event.key]);
+    else if (event.key === "PageUp" || event.key === "PageDown") {
+      event.preventDefault();
+      changeMonth(event.key === "PageUp" ? -1 : 1, true);
+      return;
+    } else if (event.key === "Home" || event.key === "End") {
+      const day = (new Date(`${active}T12:00:00`).getDay() + 6) % 7;
+      active = shiftDate(active, event.key === "Home" ? -day : 6 - day);
+    } else return;
+    event.preventDefault();
+    render(true);
+  });
+  dialog.addEventListener("close", () => trigger?.focus({ preventScroll: true }));
+  document.querySelectorAll("[data-calendar-for]").forEach((button) => {
+    button.addEventListener("click", () => {
+      trigger = button;
+      input = document.getElementById(button.dataset.calendarFor);
+      today = formatDate(new Date());
+      selected = parseDisplayDate(input.value);
+      active = selected || today;
+      dialog.querySelector("#calendar-title").textContent = button.getAttribute("aria-label");
+      render();
+      dialog.showModal();
+      grid.querySelector(`[data-date="${active}"]`)?.focus();
+    });
+  });
 }
 
 
@@ -1713,6 +1933,7 @@ function renderErrors(errors) {
     return paragraph;
   }));
   elements.errors.classList.toggle("is-visible", errors.length > 0);
+  if (errors.length) document.querySelector(".controls-disclosure").open = true;
 }
 
 function persist() {
@@ -1856,7 +2077,15 @@ function renderData() {
   renderLegend(series);
   const effectiveHighlight = settings.hiddenLocations[settings.highlightLocation] ? null : settings.highlightLocation;
   renderDashboard(elements.dashboard, series, { ...settings, highlightLocation: effectiveHighlight }, (metric, button) => {
-    popout.open(metric, series, effectiveHighlight, button);
+    if (metric.tableGroup) popout.openTable(metric.tableGroup, series, settings.tableGradient, button);
+    else popout.open(metric, series, effectiveHighlight, button);
+  }, (measures, focusedKey) => {
+    settings.temperatureMeasures = measures;
+    persist();
+    const previousScroll = elements.dashboard.scrollTop;
+    renderData();
+    elements.dashboard.scrollTop = previousScroll;
+    elements.dashboard.querySelector(focusedKey === "auto" ? "[data-temperature-automatic]" : `[data-temperature-measure="${focusedKey}"]:not(:disabled)`)?.focus({ preventScroll: true });
   });
 }
 
@@ -2221,6 +2450,11 @@ elements.form.addEventListener("submit", (event) => {
   loadComparison();
 });
 
+setupDatePickers();
+const mobileLayout = window.matchMedia("(max-width: 820px)");
+const disclosure = document.querySelector(".controls-disclosure");
+disclosure.open = !mobileLayout.matches;
+mobileLayout.addEventListener("change", (event) => { disclosure.open = !event.matches; });
 renderControls();
 renderData();
 elements.bootStatus.hidden = true;

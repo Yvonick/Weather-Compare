@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -69,4 +69,6 @@ export default {
 
 await mkdir(outputDirectory, { recursive: true });
 await writeFile(path.join(outputDirectory, "index.js"), worker, "utf8");
+await mkdir(path.join(projectRoot, "dist", ".openai"), { recursive: true });
+await copyFile(path.join(projectRoot, ".openai", "hosting.json"), path.join(projectRoot, "dist", ".openai", "hosting.json"));
 console.log("Built dist/server/index.js for Sites");

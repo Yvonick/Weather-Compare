@@ -1,5 +1,6 @@
 import { collectBucketKeys } from "./aggregate.js";
 import { METRIC_GROUPS, SERIES_STYLES } from "./config.js";
+import { resolveTemperatureMeasures } from "./settings.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const create = (tag, className, text) => {
@@ -39,27 +40,14 @@ export function lineDashForKind(dataKind) {
   return dataKind === "forecast" ? "8 5" : "";
 }
 
-const TABLE_HEAT_STOPS = [
-  { position: 0, color: [255, 255, 255] },
-  { position: 0.2, color: [43, 131, 186] },
-  { position: 0.4, color: [254, 224, 139] },
-  { position: 0.6, color: [253, 174, 97] },
-  { position: 0.8, color: [215, 48, 39] },
-  { position: 1, color: [118, 42, 131] }
-];
+const TABLE_HEAT_COLORS = ["#f8fafc", "#edf4fb", "#dceaf6", "#c5def0", "#a8cde6"];
 
 export function tableHeatStyle(value, domain) {
   if (!Number.isFinite(value) || !domain || !Number.isFinite(domain.min) || !Number.isFinite(domain.max) || domain.min === domain.max) return null;
   const position = Math.max(0, Math.min(1, (value - domain.min) / (domain.max - domain.min)));
-  const upperIndex = TABLE_HEAT_STOPS.findIndex((stop) => stop.position >= position);
-  const upper = TABLE_HEAT_STOPS[Math.max(1, upperIndex)];
-  const lower = TABLE_HEAT_STOPS[Math.max(0, upperIndex - 1)];
-  const segmentPosition = (position - lower.position) / (upper.position - lower.position);
-  const color = lower.color.map((channel, index) => Math.round(channel + (upper.color[index] - channel) * segmentPosition));
-  const brightness = (color[0] * 299 + color[1] * 587 + color[2] * 114) / 1000;
   return {
-    backgroundColor: `rgb(${color.join(" ")})`,
-    textColor: brightness < 150 ? "#fff" : "#111"
+    backgroundColor: TABLE_HEAT_COLORS[Math.min(4, Math.floor(position * 5))],
+    textColor: "#162b3d"
   };
 }
 
@@ -109,7 +97,10 @@ function tooltipText(location, row, metric) {
     }
     return `${location.label} · ${row.label} · ${forecastContext}Min ${formatNumber(row[metric.minKey], metric.digits)} ${metric.unit} · Avg ${formatNumber(row[metric.id], metric.digits)} ${metric.unit} · Max ${formatNumber(row[metric.maxKey], metric.digits)} ${metric.unit}${sourceContext}`;
   }
-  return `${location.label} · ${row.label} · ${forecastContext}${formatNumber(row[metric.id], metric.digits)} ${metric.unit}`;
+  const source = metric.id.startsWith("temperature")
+    ? row.temperatureStationName ? ` · Station: ${row.temperatureStationName}` : " · Source: Open-Meteo grid"
+    : "";
+  return `${location.label} · ${row.label} · ${forecastContext}${metric.title}: ${formatNumber(row[metric.id], metric.digits)} ${metric.unit}${source}`;
 }
 
 function attachTooltip(target, frame, text) {
@@ -238,6 +229,13 @@ export function renderChartFrame(container, metric, series, highlightIndex, { zo
     scroll.append(create("p", "empty-state", "No values are available for this chart."));
     return frame;
   }
+  if (!series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id])))) {
+    const isExtreme = ["temperatureMin", "temperatureMax"].includes(metric.id);
+    scroll.append(create("p", "empty-state", isExtreme
+      ? "No temperature extrema are available for these buckets. A single sample cannot establish a minimum or maximum. Try Average, a longer time bucket, or a different date range."
+      : "No values are available for this indicator in the selected window."));
+    return frame;
+  }
 
   const baseWidth = Math.max(680, 88 + keys.length * pointSpacingForKeys(keys));
   const width = Math.round(baseWidth * zoom);
@@ -245,7 +243,7 @@ export function renderChartFrame(container, metric, series, highlightIndex, { zo
   const margin = { top: 20 * zoom, right: 26 * zoom, bottom: 64 * zoom, left: 62 * zoom };
   const plotWidth = width - margin.left - margin.right;
   const plotHeight = height - margin.top - margin.bottom;
-  const scale = chartScale(metric, series);
+  const scale = metric.sharedScale || chartScale(metric, series);
   const yFor = (value) => margin.top + (scale.max - value) / (scale.max - scale.min) * plotHeight;
   const edgeInset = Math.min(40 * zoom, plotWidth / 4);
   const xFor = (index) => margin.left + (keys.length === 1 ? plotWidth / 2 : edgeInset + index / (keys.length - 1) * (plotWidth - edgeInset * 2));
@@ -429,21 +427,27 @@ export function buildTableModel(group, series) {
   return { buckets, heatDomains, metrics, rows };
 }
 
-function renderTable(group, series, useGradient) {
+function locationDisplayName(location, series) {
+  const shortName = (location.query || location.label).split(",")[0];
+  const collisions = series.filter((other) => (other.query || other.label).split(",")[0] === shortName);
+  return collisions.length > 1 ? location.label : shortName;
+}
+
+export function renderTable(group, series, useGradient) {
   const block = create("div", "table-block");
   const wrapper = create("div", "table-scroll");
   const table = create("table");
-  const caption = create("caption", null, group.tableTitle);
+  const caption = create("caption", "sr-only", group.tableTitle);
   const model = buildTableModel(group, series);
   if (useGradient) {
     const legend = create("div", "table-heat-legend");
     legend.setAttribute("role", "img");
-    legend.setAttribute("aria-label", "Relative color scale from very low values in white through blue, yellow, orange, and red to very high values in purple");
+    legend.setAttribute("aria-label", "Five soft blue shades, from lower to higher values within each indicator. Not a health or risk scale.");
     legend.append(
-      create("span", null, "Very low"),
+      create("span", null, "Lower"),
       create("i", "table-heat-ramp"),
-      create("span", null, "Very high"),
-      create("small", "table-heat-note", "Scaled within each indicator across the visible data; comparable temperature and wind rows share a scale.")
+      create("span", null, "Higher"),
+      create("small", "table-heat-note", "Relative to visible values, separately for each indicator. Temperature and wind measures share their respective scales. Not a risk scale.")
     );
     block.append(legend);
   }
@@ -463,7 +467,11 @@ function renderTable(group, series, useGradient) {
     const cell = create("th", classes.join(" "), bucket.label);
     cell.scope = "col";
     if (isForecast) {
-      cell.append(create("small", "forecast-column-badge", `Forecast · ${bucket.forecastConfidence || "unknown"} confidence`));
+      cell.append(create("small", "forecast-column-badge", "Forecast"));
+      const confidence = `${bucket.forecastConfidence || "unknown"} confidence (lead-time guide)`;
+      cell.append(create("small", "forecast-confidence", `${bucket.forecastConfidence || "unknown"} confidence`));
+      cell.title = confidence;
+      cell.setAttribute("aria-label", `${bucket.label} · Forecast · ${confidence}`);
     }
     headingRow.append(cell);
   });
@@ -476,13 +484,18 @@ function renderTable(group, series, useGradient) {
     if (tableRow.metricIndex === 0) {
       const station = group.id === "temperature" ? tableRow.location.temperatureSource : null;
       const locationCell = create("th", "table-location-heading");
-      locationCell.append(create("strong", null, station?.stationName || tableRow.location.label));
+      const shortName = locationDisplayName(tableRow.location, series);
+      locationCell.append(create("strong", null, shortName));
+      locationCell.title = tableRow.location.label;
+      const sourceDetails = create("details", "table-source-details");
+      sourceDetails.append(create("summary", null, "Details"), create("small", "table-location-context", tableRow.location.label));
       if (station?.stationName) {
         const distance = Number.isFinite(station.stationDistanceKm) ? ` · ${formatNumber(station.stationDistanceKm, 1)} km away` : "";
-        locationCell.append(create("small", "table-location-context", `${tableRow.location.label}${distance}`));
+        sourceDetails.append(create("small", "table-location-context", `${station.stationName}${distance}`));
       } else if (group.id === "temperature") {
-        locationCell.append(create("small", "table-location-context", `${tableRow.location.label} · Open-Meteo grid fallback`));
+        sourceDetails.append(create("small", "table-location-context", "Open-Meteo grid fallback"));
       }
+      locationCell.append(sourceDetails);
       locationCell.scope = "rowgroup";
       locationCell.rowSpan = model.metrics.length;
       rowNode.append(locationCell);
@@ -496,11 +509,13 @@ function renderTable(group, series, useGradient) {
       if (bucket.dataKind === "forecast") classes.push("forecast-table-column");
       if (bucketIndex === firstForecastIndex) classes.push("is-first-forecast-column");
       const cell = create("td", classes.join(" "), tableRow.metric.formatter === "direction" ? formatDirection(value) : formatNumber(value, tableRow.metric.digits));
+      if (bucket.dataKind === "forecast") cell.title = `Forecast · ${bucket.forecastConfidence || "unknown"} confidence (lead-time guide)`;
       if (group.id === "temperature") {
         const sourceRow = tableRow.sourceRows[bucketIndex];
-        cell.title = sourceRow?.temperatureStationName
+        const sourceTitle = sourceRow?.temperatureStationName
           ? `${sourceRow.temperatureProviderName || "Station"}: ${sourceRow.temperatureStationName}`
           : "Open-Meteo grid fallback; no station range for this bucket";
+        cell.title = [cell.title, sourceTitle].filter(Boolean).join(" · ");
       }
       const heatStyle = useGradient ? tableHeatStyle(value, tableRow.heatDomain) : null;
       if (heatStyle) {
@@ -513,12 +528,52 @@ function renderTable(group, series, useGradient) {
     body.append(rowNode);
   });
   table.append(caption, head, body);
+  wrapper.tabIndex = 0;
+  wrapper.setAttribute("role", "region");
+  wrapper.setAttribute("aria-label", `${group.tableTitle}. Scroll for more dates and locations; column and row headings stay visible.`);
   wrapper.append(table);
   block.append(wrapper);
   return block;
 }
 
-function renderGroup(group, series, settings, onPopout) {
+export function temperatureChartMetrics(selection, series) {
+  const measures = resolveTemperatureMeasures(selection, series.length);
+  const definitions = {
+    min: { id: "temperatureMin", title: "Minimum temperature" },
+    avg: { id: "temperatureAvg", title: "Average temperature" },
+    max: { id: "temperatureMax", title: "Maximum temperature" }
+  };
+  // Small multiples use one scale, derived only from the selected measures.
+  const scaleSeries = [{ rows: series.flatMap((location) => location.rows.flatMap((row) => measures.map((key) => ({ value: row[definitions[key].id] })))) }];
+  const sharedScale = chartScale({ id: "value", digits: 1 }, scaleSeries);
+  return measures.map((key) => ({ ...definitions[key], unit: "°C", digits: 1, sharedScale }));
+}
+
+function renderTemperatureControls(series, settings, onChange) {
+  const controls = create("fieldset", "temperature-controls");
+  controls.append(create("legend", null, "Temperature measures"));
+  const measures = resolveTemperatureMeasures(settings.temperatureMeasures, series.length);
+  for (const [key, label] of [["min", "Minimum"], ["avg", "Average"], ["max", "Maximum"]]) {
+    const field = create("label");
+    const input = create("input");
+    input.type = "checkbox";
+    input.checked = measures.includes(key);
+    input.dataset.temperatureMeasure = key;
+    input.disabled = measures.length === 1 && input.checked;
+    input.addEventListener("change", () => onChange(input.checked ? [...measures, key] : measures.filter((value) => value !== key), key));
+    field.append(input, document.createTextNode(label));
+    controls.append(field);
+  }
+  const automatic = create("button", "text-button", "Automatic");
+  automatic.type = "button";
+  automatic.dataset.temperatureAutomatic = "";
+  automatic.setAttribute("aria-pressed", String(!settings.temperatureMeasures));
+  automatic.addEventListener("click", () => onChange(null, "auto"));
+  controls.append(automatic, create("small", null, `${settings.temperatureMeasures ? "Manual selection." : "Automatic selection."} One location: all three; multiple locations: average. At least one measure stays selected. Separate charts share a scale.`));
+  return controls;
+}
+
+function renderGroup(group, series, settings, onPopout, onTemperatureChange) {
   const displayGroup = group;
   const article = create("article", "panel metric-panel");
   const intro = create("div", "panel-intro");
@@ -534,20 +589,43 @@ function renderGroup(group, series, settings, onPopout) {
   if (!series.length) {
     article.append(create("p", "empty-state", "Load at least one visible location to populate this panel."));
   } else if (settings.view === "table") {
+    const tableHead = create("div", "chart-head table-head");
+    tableHead.append(create("h3", null, group.tableTitle));
+    const expand = create("button", "text-button", "Pop out");
+    expand.type = "button";
+    expand.setAttribute("aria-label", `Pop out ${group.tableTitle}`);
+    expand.addEventListener("click", () => onPopout({ tableGroup: group }, expand));
+    tableHead.append(expand);
+    article.append(tableHead);
     article.append(renderTable(displayGroup, series, settings.tableGradient));
   } else {
-    const metrics = displayGroup.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
-    const grid = create("div", `chart-grid ${metrics.length === 1 ? "single" : ""}`);
+    if (group.id === "temperature") {
+      article.append(renderTemperatureControls(series, settings, onTemperatureChange));
+      const key = create("div", "comparison-key");
+      key.setAttribute("aria-label", "Location colors");
+      for (const location of series) {
+        const style = SERIES_STYLES[location.styleIndex % SERIES_STYLES.length];
+        const item = create("span");
+        const marker = create("i", `comparison-marker is-${style.marker}`);
+        marker.style.background = style.color;
+        item.title = location.label;
+        item.append(marker, document.createTextNode(locationDisplayName(location, series)));
+        key.append(item);
+      }
+      article.append(key);
+    }
+    const metrics = group.id === "temperature" ? temperatureChartMetrics(settings.temperatureMeasures, series) : displayGroup.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
+    const grid = create("div", `chart-grid ${metrics.length === 1 || group.id === "temperature" ? "single" : ""}`);
     metrics.forEach((metric) => grid.append(renderChartCard(metric, series, settings.highlightLocation, onPopout)));
     article.append(grid);
   }
   return article;
 }
 
-export function renderDashboard(container, series, settings, onPopout) {
+export function renderDashboard(container, series, settings, onPopout, onTemperatureChange) {
   const sourcePanel = container.querySelector("#sources-panel");
   container.querySelectorAll(".metric-panel").forEach((panel) => panel.remove());
-  METRIC_GROUPS.forEach((group) => container.insertBefore(renderGroup(group, series, settings, onPopout), sourcePanel));
+  METRIC_GROUPS.forEach((group) => container.insertBefore(renderGroup(group, series, settings, onPopout, onTemperatureChange), sourcePanel));
 }
 
 export function createChartPopout(dialog) {
@@ -564,6 +642,10 @@ export function createChartPopout(dialog) {
 
   const rerender = () => {
     if (!state) return;
+    if (state.tableGroup) {
+      body.replaceChildren(renderTable(state.tableGroup, state.series, state.useGradient));
+      return;
+    }
     renderChartFrame(body, state.metric, state.series, state.highlightIndex, { zoom: state.zoom });
     reset.disabled = state.zoom === 1;
     zoomOut.disabled = state.zoom <= 0.7;
@@ -590,6 +672,7 @@ export function createChartPopout(dialog) {
   dialog.addEventListener("close", () => trigger?.focus());
   body.addEventListener("pointerdown", (event) => {
     const scroll = body.querySelector(".chart-scroll");
+    if (!scroll || event.pointerType !== "mouse" || event.button !== 0) return;
     drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: scroll.scrollLeft, top: scroll.scrollTop, scroll };
     body.setPointerCapture?.(event.pointerId);
   });
@@ -608,9 +691,22 @@ export function createChartPopout(dialog) {
       trigger = sourceButton;
       title.textContent = metric.title;
       unit.textContent = `Magnified visualization · ${metric.unit}`;
+      dialog.classList.remove("is-table-popout");
+      [zoomIn, zoomOut, reset].forEach((button) => { button.hidden = false; });
       rerender();
       dialog.showModal();
       zoomIn.focus();
+    },
+    openTable(group, series, useGradient, sourceButton) {
+      state = { tableGroup: group, series, useGradient };
+      trigger = sourceButton;
+      title.textContent = group.tableTitle;
+      unit.textContent = "Expanded table · scroll for more dates";
+      dialog.classList.add("is-table-popout");
+      [zoomIn, zoomOut, reset].forEach((button) => { button.hidden = true; });
+      rerender();
+      dialog.showModal();
+      close.focus();
     }
   };
 }

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildTableModel, chartScale, chartTickParts, lineDashForKind, tableHeatStyle } from "../src/charts.js";
+import { buildTableModel, chartScale, chartTickParts, lineDashForKind, tableHeatStyle, temperatureChartMetrics } from "../src/charts.js";
 
 const seriesWith = (key, values) => [{
   rows: values.map((value) => ({ [key]: value }))
@@ -71,11 +71,35 @@ test("table models put time buckets on columns and location indicators on rows",
   assert.equal(model.buckets[1].dataKind, "forecast");
 });
 
-test("table heat colors span the requested low-to-high palette with readable text", () => {
+test("table heat colors use at most five quiet shades with high-contrast text", () => {
   const domain = { min: -10, max: 40 };
-  assert.deepEqual(tableHeatStyle(-10, domain), { backgroundColor: "rgb(255 255 255)", textColor: "#111" });
-  assert.deepEqual(tableHeatStyle(40, domain), { backgroundColor: "rgb(118 42 131)", textColor: "#fff" });
+  assert.deepEqual(tableHeatStyle(-10, domain), { backgroundColor: "#f8fafc", textColor: "#162b3d" });
+  assert.deepEqual(tableHeatStyle(40, domain), { backgroundColor: "#a8cde6", textColor: "#162b3d" });
+  const shades = new Set(Array.from({ length: 51 }, (_, i) => tableHeatStyle(i - 10, domain).backgroundColor));
+  assert.equal(shades.size, 5);
+  const luminance = (hex) => {
+    const rgb = hex.match(/[a-f\d]{2}/gi).map((channel) => parseInt(channel, 16) / 255).map((channel) => channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4);
+    return rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722;
+  };
+  for (const color of shades) assert.ok((luminance(color) + .05) / (luminance("#162b3d") + .05) > 7);
   assert.equal(tableHeatStyle(4, { min: 4, max: 4 }), null);
+  assert.equal(tableHeatStyle(null, domain), null);
+  assert.equal(tableHeatStyle(NaN, domain), null);
+});
+
+test("selected temperature charts share a scale without including hidden extrema", () => {
+  const series = [{ rows: [{ temperatureMin: -40, temperatureAvg: 20, temperatureMax: 45 }, { temperatureMin: 0, temperatureAvg: 21, temperatureMax: 40 }] }];
+  const average = temperatureChartMetrics(["avg"], series);
+  assert.equal(average[0].id, "temperatureAvg");
+  assert.equal(average[0].type, undefined);
+  assert.ok(average[0].sharedScale.min > 19);
+  assert.ok(average[0].sharedScale.max < 22);
+  const all = temperatureChartMetrics(null, series);
+  assert.equal(all.length, 3);
+  assert.ok(all.every((metric) => metric.sharedScale === all[0].sharedScale));
+  assert.ok(all[0].sharedScale.min < -40);
+  assert.ok(all[0].sharedScale.max > 45);
+  assert.equal(temperatureChartMetrics(null, [...series, ...series]).length, 1);
 });
 
 test("temperature table rows share one heat domain", () => {

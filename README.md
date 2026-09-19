@@ -2,6 +2,13 @@
 
 A dependency-free web application for comparing historical and forecast weather and air-quality data across up to 20 places. The default view joins the previous seven complete days to a seven-day forecast on one continuous timeline. Weather and air quality come from Open-Meteo. Historical temperature ranges use higher-frequency national station observations where possible, with an automatic per-bucket Open-Meteo fallback.
 
+## Reading comparisons
+
+- On desktop, settings and results scroll independently beneath a compact header. On mobile, the page scrolls normally and settings can be expanded or collapsed.
+- Temperature graphs offer Minimum, Average, and Maximum checkboxes. Automatic mode shows all three for one visible location and average for multiple locations; a manual choice persists in browser settings and share links. Selected measures use separate aligned charts with a shared scale. Missing extrema remain missing rather than being inferred from a single sample. Tables and exports always retain all measures.
+- Tables have compact frozen location/indicator columns and frozen date headings, and each can be expanded using Pop out. Optional shading uses five low-saturation blue steps with dark text, scaled independently per indicator (related temperature and wind measures share a domain). This is a relative comparison, not a health-risk scale; constant or missing values are unshaded.
+- Date fields accept `dd/mm/yyyy` or the calendar button. The picker supports month/year navigation, arrow keys, Page Up/Down, Today, and Escape.
+
 ## Run locally
 
 ```powershell
@@ -43,7 +50,8 @@ npm.cmd run check
 - `server/temperature-api.js` — normalized national station adapters and fallback contract
 - `server/uk-stations.js` — generated Met Office station catalog
 - `src/settings.js` — defaults, validation, persistence, and share-link serialization
-- `src/charts.js` — SVG charts, tables, tooltips, and chart pop-outs
+- `src/charts.js` — SVG charts, tables, tooltips, and chart/table pop-outs
+- `src/calendar.js` — accessible embedded-browser-compatible date picker
 - `src/export.js` — stable CSV export schema
 - `src/app.js` — UI state and event orchestration
 - `scripts/build.mjs` — creates the browser-compatible `app.bundle.js` entry point

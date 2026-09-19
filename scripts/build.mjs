@@ -11,6 +11,7 @@ const moduleOrder = [
   "src/async.js",
   "src/export.js",
   "src/charts.js",
+  "src/calendar.js",
   "src/app.js"
 ];
 

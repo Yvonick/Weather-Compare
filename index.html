@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Compare historical and forecast weather and air quality across places.">
   <title>Weather Compare</title>
-  <link rel="stylesheet" href="./styles.css?v=forecast-boundary-5">
+  <link rel="stylesheet" href="./styles.css?v=readability-6">
 </head>
 <body>
   <main class="page-shell">
@@ -17,6 +17,9 @@
 
     <div class="app-layout">
       <aside class="controls-column" aria-label="Dataset controls">
+        <details class="controls-disclosure" open>
+          <summary>Locations &amp; settings</summary>
+          <div class="controls-stack">
         <form id="controls-form" class="panel controls-panel" novalidate>
           <div>
             <p class="eyebrow">Parameters</p>
@@ -43,10 +46,10 @@
           </label>
 
           <div class="field-grid">
-            <label class="field"><span>Start date</span><input id="start-date-input" name="startDate" type="text" inputmode="numeric" placeholder="dd/mm/yyyy" maxlength="10" pattern="\d{2}/\d{2}/\d{4}" aria-describedby="date-format-note"></label>
-            <label class="field"><span>End date</span><input id="end-date-input" name="endDate" type="text" inputmode="numeric" placeholder="dd/mm/yyyy" maxlength="10" pattern="\d{2}/\d{2}/\d{4}" aria-describedby="date-format-note"></label>
+            <div class="field"><label for="start-date-input">Start date</label><div class="date-input-wrap"><input id="start-date-input" name="startDate" type="text" inputmode="numeric" placeholder="dd/mm/yyyy" maxlength="10" pattern="\d{2}/\d{2}/\d{4}" aria-describedby="date-format-note"><button type="button" data-calendar-for="start-date-input" aria-label="Choose start date" aria-haspopup="dialog" title="Choose start date">▦</button></div></div>
+            <div class="field"><label for="end-date-input">End date</label><div class="date-input-wrap"><input id="end-date-input" name="endDate" type="text" inputmode="numeric" placeholder="dd/mm/yyyy" maxlength="10" pattern="\d{2}/\d{2}/\d{4}" aria-describedby="date-format-note"><button type="button" data-calendar-for="end-date-input" aria-label="Choose end date" aria-haspopup="dialog" title="Choose end date">▦</button></div></div>
           </div>
-          <small id="date-format-note" class="field-note">Date format: dd/mm/yyyy</small>
+          <small id="date-format-note" class="field-note">Pick a date with the calendar, or type dd/mm/yyyy.</small>
 
           <div class="field-grid">
             <label class="field">
@@ -72,7 +75,7 @@
 
           <label id="table-gradient-field" class="checkbox-field">
             <input id="table-gradient-input" name="tableGradient" type="checkbox">
-            <span><strong>Color-scale table values</strong><small>White → blue → yellow → orange → red → purple, from very low to very high.</small></span>
+            <span><strong>Shade table values</strong><small>Five soft blue shades from lower to higher, scaled per indicator.</small></span>
           </label>
 
           <div class="action-grid">
@@ -101,6 +104,8 @@
           <p class="note">Colors and marker shapes identify locations across every chart. Dashed chart lines mean forecast only. Temperature source labels identify the station, distance, and range method; uncovered buckets use the Open-Meteo fallback.</p>
           <div id="series-legend" class="series-legend"><p class="empty-state">Load at least one location to show the legend.</p></div>
         </section>
+          </div>
+        </details>
       </aside>
 
       <section id="dashboard" class="dashboard" aria-label="Weather comparison">
@@ -131,10 +136,10 @@
     </div>
   </main>
 
-  <dialog id="chart-popout" class="chart-popout">
+  <dialog id="chart-popout" class="chart-popout" aria-labelledby="popout-title">
     <div class="popout-shell">
       <header class="popout-head">
-        <div><p data-popout-unit class="eyebrow"></p><h2 data-popout-title></h2></div>
+        <div><p data-popout-unit class="eyebrow"></p><h2 id="popout-title" data-popout-title></h2></div>
         <div class="popout-actions">
           <button data-zoom-out class="secondary-button" type="button" aria-label="Zoom out graph">Zoom out</button>
           <button data-zoom-in class="secondary-button" type="button" aria-label="Zoom in graph">Zoom in</button>
@@ -147,6 +152,6 @@
   </dialog>
 
   <noscript><p class="startup-error">Weather Compare needs JavaScript enabled to create the location search controls.</p></noscript>
-  <script defer src="./app.bundle.js?v=forecast-boundary-5"></script>
+  <script defer src="./app.bundle.js?v=readability-6"></script>
 </body>
 </html>

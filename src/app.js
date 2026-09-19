@@ -1,6 +1,7 @@
 import { fetchLocationData, suggestLocationOptions } from "./api.js";
 import { settleWithConcurrency } from "./async.js";
 import { createChartPopout, renderDashboard } from "./charts.js";
+import { setupDatePickers } from "./calendar.js";
 import { CONTINUOUS_PRESET, MAX_LOCATIONS, SERIES_STYLES } from "./config.js";
 import { downloadCsv } from "./export.js";
 import {
@@ -80,6 +81,7 @@ function renderErrors(errors) {
     return paragraph;
   }));
   elements.errors.classList.toggle("is-visible", errors.length > 0);
+  if (errors.length) document.querySelector(".controls-disclosure").open = true;
 }
 
 function persist() {
@@ -223,7 +225,15 @@ function renderData() {
   renderLegend(series);
   const effectiveHighlight = settings.hiddenLocations[settings.highlightLocation] ? null : settings.highlightLocation;
   renderDashboard(elements.dashboard, series, { ...settings, highlightLocation: effectiveHighlight }, (metric, button) => {
-    popout.open(metric, series, effectiveHighlight, button);
+    if (metric.tableGroup) popout.openTable(metric.tableGroup, series, settings.tableGradient, button);
+    else popout.open(metric, series, effectiveHighlight, button);
+  }, (measures, focusedKey) => {
+    settings.temperatureMeasures = measures;
+    persist();
+    const previousScroll = elements.dashboard.scrollTop;
+    renderData();
+    elements.dashboard.scrollTop = previousScroll;
+    elements.dashboard.querySelector(focusedKey === "auto" ? "[data-temperature-automatic]" : `[data-temperature-measure="${focusedKey}"]:not(:disabled)`)?.focus({ preventScroll: true });
   });
 }
 
@@ -588,6 +598,11 @@ elements.form.addEventListener("submit", (event) => {
   loadComparison();
 });
 
+setupDatePickers();
+const mobileLayout = window.matchMedia("(max-width: 820px)");
+const disclosure = document.querySelector(".controls-disclosure");
+disclosure.open = !mobileLayout.matches;
+mobileLayout.addEventListener("change", (event) => { disclosure.open = !event.matches; });
 renderControls();
 renderData();
 elements.bootStatus.hidden = true;
