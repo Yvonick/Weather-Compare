@@ -186,8 +186,7 @@ function createDefaultSettings(now = new Date()) {
     endDate: shiftDate(today, 6),
     granularity: "day",
     view: "graph",
-    tableGradient: false,
-    temperatureMeasures: null
+    tableGradient: false
   };
 }
 
@@ -212,18 +211,8 @@ function normalizeSettings(candidate = {}, now = new Date()) {
     endDate: isDateString(candidate.endDate) ? candidate.endDate : fallback.endDate,
     granularity: ["day", "12h", "6h", "3h", "1h", "30m"].includes(candidate.granularity) ? candidate.granularity : fallback.granularity,
     view: ["graph", "table"].includes(candidate.view) ? candidate.view : fallback.view,
-    tableGradient: candidate.tableGradient === true || candidate.tableGradient === 1 || candidate.tableGradient === "1" || candidate.tableGradient === "true",
-    temperatureMeasures: normalizeTemperatureMeasures(candidate.temperatureMeasures)
+    tableGradient: candidate.tableGradient === true || candidate.tableGradient === 1 || candidate.tableGradient === "1" || candidate.tableGradient === "true"
   };
-}
-
-function normalizeTemperatureMeasures(value) {
-  const selected = ["min", "avg", "max"].filter((key) => Array.isArray(value) && value.includes(key));
-  return selected.length ? selected : null;
-}
-
-function resolveTemperatureMeasures(value, visibleCount) {
-  return normalizeTemperatureMeasures(value) || (visibleCount === 1 ? ["min", "avg", "max"] : ["avg"]);
 }
 
 function syncPresetDates(settings, now = new Date()) {
@@ -264,8 +253,7 @@ function settingsFromUrl(url, now = new Date()) {
     endDate: params.get("end"),
     granularity: params.get("granularity"),
     view: params.get("view"),
-    tableGradient: params.get("gradient"),
-    temperatureMeasures: params.get("temperature")?.split(",")
+    tableGradient: params.get("gradient")
   }, now);
 }
 
@@ -284,8 +272,6 @@ function buildShareUrl(settings, baseUrl) {
   url.searchParams.set("granularity", settings.granularity);
   url.searchParams.set("view", settings.view);
   url.searchParams.set("gradient", settings.tableGradient ? "1" : "0");
-  const measures = normalizeTemperatureMeasures(settings.temperatureMeasures);
-  if (measures) url.searchParams.set("temperature", measures.join(","));
   if (Number.isInteger(settings.highlightLocation)) url.searchParams.set("highlight", String(settings.highlightLocation));
   return url.toString();
 }
@@ -1580,44 +1566,20 @@ function renderTable(group, series, useGradient) {
   return block;
 }
 
-function temperatureChartMetrics(selection, series) {
-  const measures = resolveTemperatureMeasures(selection, series.length);
+function temperatureChartMetrics(series) {
+  const measures = ["min", "avg", "max"];
   const definitions = {
     min: { id: "temperatureMin", title: "Minimum temperature" },
     avg: { id: "temperatureAvg", title: "Average temperature" },
     max: { id: "temperatureMax", title: "Maximum temperature" }
   };
-  // Small multiples use one scale, derived only from the selected measures.
+  // All three charts share a scale derived from the visible locations.
   const scaleSeries = [{ rows: series.flatMap((location) => location.rows.flatMap((row) => measures.map((key) => ({ value: row[definitions[key].id] })))) }];
   const sharedScale = chartScale({ id: "value", digits: 1 }, scaleSeries);
   return measures.map((key) => ({ ...definitions[key], unit: "°C", digits: 1, sharedScale }));
 }
 
-function renderTemperatureControls(series, settings, onChange) {
-  const controls = create("fieldset", "temperature-controls");
-  controls.append(create("legend", null, "Temperature measures"));
-  const measures = resolveTemperatureMeasures(settings.temperatureMeasures, series.length);
-  for (const [key, label] of [["min", "Minimum"], ["avg", "Average"], ["max", "Maximum"]]) {
-    const field = create("label");
-    const input = create("input");
-    input.type = "checkbox";
-    input.checked = measures.includes(key);
-    input.dataset.temperatureMeasure = key;
-    input.disabled = measures.length === 1 && input.checked;
-    input.addEventListener("change", () => onChange(input.checked ? [...measures, key] : measures.filter((value) => value !== key), key));
-    field.append(input, document.createTextNode(label));
-    controls.append(field);
-  }
-  const automatic = create("button", "text-button", "Automatic");
-  automatic.type = "button";
-  automatic.dataset.temperatureAutomatic = "";
-  automatic.setAttribute("aria-pressed", String(!settings.temperatureMeasures));
-  automatic.addEventListener("click", () => onChange(null, "auto"));
-  controls.append(automatic, create("small", null, `${settings.temperatureMeasures ? "Manual selection." : "Automatic selection."} One location: all three; multiple locations: average. At least one measure stays selected. Separate charts share a scale.`));
-  return controls;
-}
-
-function renderGroup(group, series, settings, onPopout, onTemperatureChange) {
+function renderGroup(group, series, settings, onPopout) {
   const displayGroup = group;
   const article = create("article", "panel metric-panel");
   const intro = create("div", "panel-intro");
@@ -1644,7 +1606,7 @@ function renderGroup(group, series, settings, onPopout, onTemperatureChange) {
     article.append(renderTable(displayGroup, series, settings.tableGradient));
   } else {
     if (group.id === "temperature") {
-      article.append(renderTemperatureControls(series, settings, onTemperatureChange));
+      article.append(create("p", "method-note", "Minimum, average, and maximum are shown below on three aligned charts with the same temperature scale."));
       const key = create("div", "comparison-key");
       key.setAttribute("aria-label", "Location colors");
       for (const location of series) {
@@ -1658,7 +1620,7 @@ function renderGroup(group, series, settings, onPopout, onTemperatureChange) {
       }
       article.append(key);
     }
-    const metrics = group.id === "temperature" ? temperatureChartMetrics(settings.temperatureMeasures, series) : displayGroup.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
+    const metrics = group.id === "temperature" ? temperatureChartMetrics(series) : displayGroup.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
     const grid = create("div", `chart-grid ${metrics.length === 1 || group.id === "temperature" ? "single" : ""}`);
     metrics.forEach((metric) => grid.append(renderChartCard(metric, series, settings.highlightLocation, onPopout)));
     article.append(grid);
@@ -1666,10 +1628,10 @@ function renderGroup(group, series, settings, onPopout, onTemperatureChange) {
   return article;
 }
 
-function renderDashboard(container, series, settings, onPopout, onTemperatureChange) {
+function renderDashboard(container, series, settings, onPopout) {
   const sourcePanel = container.querySelector("#sources-panel");
   container.querySelectorAll(".metric-panel").forEach((panel) => panel.remove());
-  METRIC_GROUPS.forEach((group) => container.insertBefore(renderGroup(group, series, settings, onPopout, onTemperatureChange), sourcePanel));
+  METRIC_GROUPS.forEach((group) => container.insertBefore(renderGroup(group, series, settings, onPopout), sourcePanel));
 }
 
 function createChartPopout(dialog) {
@@ -2079,13 +2041,6 @@ function renderData() {
   renderDashboard(elements.dashboard, series, { ...settings, highlightLocation: effectiveHighlight }, (metric, button) => {
     if (metric.tableGroup) popout.openTable(metric.tableGroup, series, settings.tableGradient, button);
     else popout.open(metric, series, effectiveHighlight, button);
-  }, (measures, focusedKey) => {
-    settings.temperatureMeasures = measures;
-    persist();
-    const previousScroll = elements.dashboard.scrollTop;
-    renderData();
-    elements.dashboard.scrollTop = previousScroll;
-    elements.dashboard.querySelector(focusedKey === "auto" ? "[data-temperature-automatic]" : `[data-temperature-measure="${focusedKey}"]:not(:disabled)`)?.focus({ preventScroll: true });
   });
 }
 

@@ -5,7 +5,7 @@ A dependency-free web application for comparing historical and forecast weather 
 ## Reading comparisons
 
 - On desktop, settings and results scroll independently beneath a compact header. On mobile, the page scrolls normally and settings can be expanded or collapsed.
-- Temperature graphs offer Minimum, Average, and Maximum checkboxes. Automatic mode shows all three for one visible location and average for multiple locations; a manual choice persists in browser settings and share links. Selected measures use separate aligned charts with a shared scale. Missing extrema remain missing rather than being inferred from a single sample. Tables and exports always retain all measures.
+- Temperature always shows Minimum, Average, and Maximum in three aligned charts with a shared scale, regardless of the number of visible locations. Legacy measure selections in saved settings or share links are ignored. Missing extrema remain missing rather than being inferred from a single sample. Tables and exports retain all measures.
 - Tables have compact frozen location/indicator columns and frozen date headings, and each can be expanded using Pop out. Optional shading uses five low-saturation blue steps with dark text, scaled independently per indicator (related temperature and wind measures share a domain). This is a relative comparison, not a health-risk scale; constant or missing values are unshaded.
 - Date fields accept `dd/mm/yyyy` or the calendar button. The picker supports month/year navigation, arrow keys, Page Up/Down, Today, and Escape.
 

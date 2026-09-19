@@ -87,19 +87,20 @@ test("table heat colors use at most five quiet shades with high-contrast text", 
   assert.equal(tableHeatStyle(NaN, domain), null);
 });
 
-test("selected temperature charts share a scale without including hidden extrema", () => {
+test("temperature always shows all three measures on a shared scale for one or several locations", () => {
   const series = [{ rows: [{ temperatureMin: -40, temperatureAvg: 20, temperatureMax: 45 }, { temperatureMin: 0, temperatureAvg: 21, temperatureMax: 40 }] }];
-  const average = temperatureChartMetrics(["avg"], series);
-  assert.equal(average[0].id, "temperatureAvg");
-  assert.equal(average[0].type, undefined);
-  assert.ok(average[0].sharedScale.min > 19);
-  assert.ok(average[0].sharedScale.max < 22);
-  const all = temperatureChartMetrics(null, series);
-  assert.equal(all.length, 3);
+  const all = temperatureChartMetrics(series);
+  assert.deepEqual(all.map((metric) => metric.id), ["temperatureMin", "temperatureAvg", "temperatureMax"]);
   assert.ok(all.every((metric) => metric.sharedScale === all[0].sharedScale));
   assert.ok(all[0].sharedScale.min < -40);
   assert.ok(all[0].sharedScale.max > 45);
-  assert.equal(temperatureChartMetrics(null, [...series, ...series]).length, 1);
+  assert.equal(temperatureChartMetrics([...series, ...series]).length, 3);
+});
+
+test("missing extrema keep their panels without inventing values", () => {
+  const all = temperatureChartMetrics([{ rows: [{ temperatureMin: null, temperatureAvg: 20, temperatureMax: null }] }]);
+  assert.equal(all.length, 3);
+  assert.ok(all.every((metric) => Number.isFinite(metric.sharedScale.min) && Number.isFinite(metric.sharedScale.max)));
 });
 
 test("temperature table rows share one heat domain", () => {

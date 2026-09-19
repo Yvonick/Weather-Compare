@@ -227,13 +227,6 @@ function renderData() {
   renderDashboard(elements.dashboard, series, { ...settings, highlightLocation: effectiveHighlight }, (metric, button) => {
     if (metric.tableGroup) popout.openTable(metric.tableGroup, series, settings.tableGradient, button);
     else popout.open(metric, series, effectiveHighlight, button);
-  }, (measures, focusedKey) => {
-    settings.temperatureMeasures = measures;
-    persist();
-    const previousScroll = elements.dashboard.scrollTop;
-    renderData();
-    elements.dashboard.scrollTop = previousScroll;
-    elements.dashboard.querySelector(focusedKey === "auto" ? "[data-temperature-automatic]" : `[data-temperature-measure="${focusedKey}"]:not(:disabled)`)?.focus({ preventScroll: true });
   });
 }
 

@@ -45,8 +45,7 @@ export function createDefaultSettings(now = new Date()) {
     endDate: shiftDate(today, 6),
     granularity: "day",
     view: "graph",
-    tableGradient: false,
-    temperatureMeasures: null
+    tableGradient: false
   };
 }
 
@@ -71,18 +70,8 @@ export function normalizeSettings(candidate = {}, now = new Date()) {
     endDate: isDateString(candidate.endDate) ? candidate.endDate : fallback.endDate,
     granularity: ["day", "12h", "6h", "3h", "1h", "30m"].includes(candidate.granularity) ? candidate.granularity : fallback.granularity,
     view: ["graph", "table"].includes(candidate.view) ? candidate.view : fallback.view,
-    tableGradient: candidate.tableGradient === true || candidate.tableGradient === 1 || candidate.tableGradient === "1" || candidate.tableGradient === "true",
-    temperatureMeasures: normalizeTemperatureMeasures(candidate.temperatureMeasures)
+    tableGradient: candidate.tableGradient === true || candidate.tableGradient === 1 || candidate.tableGradient === "1" || candidate.tableGradient === "true"
   };
-}
-
-export function normalizeTemperatureMeasures(value) {
-  const selected = ["min", "avg", "max"].filter((key) => Array.isArray(value) && value.includes(key));
-  return selected.length ? selected : null;
-}
-
-export function resolveTemperatureMeasures(value, visibleCount) {
-  return normalizeTemperatureMeasures(value) || (visibleCount === 1 ? ["min", "avg", "max"] : ["avg"]);
 }
 
 export function syncPresetDates(settings, now = new Date()) {
@@ -123,8 +112,7 @@ export function settingsFromUrl(url, now = new Date()) {
     endDate: params.get("end"),
     granularity: params.get("granularity"),
     view: params.get("view"),
-    tableGradient: params.get("gradient"),
-    temperatureMeasures: params.get("temperature")?.split(",")
+    tableGradient: params.get("gradient")
   }, now);
 }
 
@@ -143,8 +131,6 @@ export function buildShareUrl(settings, baseUrl) {
   url.searchParams.set("granularity", settings.granularity);
   url.searchParams.set("view", settings.view);
   url.searchParams.set("gradient", settings.tableGradient ? "1" : "0");
-  const measures = normalizeTemperatureMeasures(settings.temperatureMeasures);
-  if (measures) url.searchParams.set("temperature", measures.join(","));
   if (Number.isInteger(settings.highlightLocation)) url.searchParams.set("highlight", String(settings.highlightLocation));
   return url.toString();
 }

@@ -1,6 +1,5 @@
 import { collectBucketKeys } from "./aggregate.js";
 import { METRIC_GROUPS, SERIES_STYLES } from "./config.js";
-import { resolveTemperatureMeasures } from "./settings.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const create = (tag, className, text) => {
@@ -536,44 +535,20 @@ export function renderTable(group, series, useGradient) {
   return block;
 }
 
-export function temperatureChartMetrics(selection, series) {
-  const measures = resolveTemperatureMeasures(selection, series.length);
+export function temperatureChartMetrics(series) {
+  const measures = ["min", "avg", "max"];
   const definitions = {
     min: { id: "temperatureMin", title: "Minimum temperature" },
     avg: { id: "temperatureAvg", title: "Average temperature" },
     max: { id: "temperatureMax", title: "Maximum temperature" }
   };
-  // Small multiples use one scale, derived only from the selected measures.
+  // All three charts share a scale derived from the visible locations.
   const scaleSeries = [{ rows: series.flatMap((location) => location.rows.flatMap((row) => measures.map((key) => ({ value: row[definitions[key].id] })))) }];
   const sharedScale = chartScale({ id: "value", digits: 1 }, scaleSeries);
   return measures.map((key) => ({ ...definitions[key], unit: "°C", digits: 1, sharedScale }));
 }
 
-function renderTemperatureControls(series, settings, onChange) {
-  const controls = create("fieldset", "temperature-controls");
-  controls.append(create("legend", null, "Temperature measures"));
-  const measures = resolveTemperatureMeasures(settings.temperatureMeasures, series.length);
-  for (const [key, label] of [["min", "Minimum"], ["avg", "Average"], ["max", "Maximum"]]) {
-    const field = create("label");
-    const input = create("input");
-    input.type = "checkbox";
-    input.checked = measures.includes(key);
-    input.dataset.temperatureMeasure = key;
-    input.disabled = measures.length === 1 && input.checked;
-    input.addEventListener("change", () => onChange(input.checked ? [...measures, key] : measures.filter((value) => value !== key), key));
-    field.append(input, document.createTextNode(label));
-    controls.append(field);
-  }
-  const automatic = create("button", "text-button", "Automatic");
-  automatic.type = "button";
-  automatic.dataset.temperatureAutomatic = "";
-  automatic.setAttribute("aria-pressed", String(!settings.temperatureMeasures));
-  automatic.addEventListener("click", () => onChange(null, "auto"));
-  controls.append(automatic, create("small", null, `${settings.temperatureMeasures ? "Manual selection." : "Automatic selection."} One location: all three; multiple locations: average. At least one measure stays selected. Separate charts share a scale.`));
-  return controls;
-}
-
-function renderGroup(group, series, settings, onPopout, onTemperatureChange) {
+function renderGroup(group, series, settings, onPopout) {
   const displayGroup = group;
   const article = create("article", "panel metric-panel");
   const intro = create("div", "panel-intro");
@@ -600,7 +575,7 @@ function renderGroup(group, series, settings, onPopout, onTemperatureChange) {
     article.append(renderTable(displayGroup, series, settings.tableGradient));
   } else {
     if (group.id === "temperature") {
-      article.append(renderTemperatureControls(series, settings, onTemperatureChange));
+      article.append(create("p", "method-note", "Minimum, average, and maximum are shown below on three aligned charts with the same temperature scale."));
       const key = create("div", "comparison-key");
       key.setAttribute("aria-label", "Location colors");
       for (const location of series) {
@@ -614,7 +589,7 @@ function renderGroup(group, series, settings, onPopout, onTemperatureChange) {
       }
       article.append(key);
     }
-    const metrics = group.id === "temperature" ? temperatureChartMetrics(settings.temperatureMeasures, series) : displayGroup.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
+    const metrics = group.id === "temperature" ? temperatureChartMetrics(series) : displayGroup.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
     const grid = create("div", `chart-grid ${metrics.length === 1 || group.id === "temperature" ? "single" : ""}`);
     metrics.forEach((metric) => grid.append(renderChartCard(metric, series, settings.highlightLocation, onPopout)));
     article.append(grid);
@@ -622,10 +597,10 @@ function renderGroup(group, series, settings, onPopout, onTemperatureChange) {
   return article;
 }
 
-export function renderDashboard(container, series, settings, onPopout, onTemperatureChange) {
+export function renderDashboard(container, series, settings, onPopout) {
   const sourcePanel = container.querySelector("#sources-panel");
   container.querySelectorAll(".metric-panel").forEach((panel) => panel.remove());
-  METRIC_GROUPS.forEach((group) => container.insertBefore(renderGroup(group, series, settings, onPopout, onTemperatureChange), sourcePanel));
+  METRIC_GROUPS.forEach((group) => container.insertBefore(renderGroup(group, series, settings, onPopout), sourcePanel));
 }
 
 export function createChartPopout(dialog) {

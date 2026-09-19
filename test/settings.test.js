@@ -6,7 +6,6 @@ import {
   describeWindow,
   formatDisplayDate,
   normalizeSettings,
-  resolveTemperatureMeasures,
   parseDisplayDate,
   settingsFromUrl,
   syncPresetDates,
@@ -75,23 +74,19 @@ test("share URLs round-trip all compatibility parameters", () => {
     endDate: "2026-07-02",
     granularity: "12h",
     view: "table",
-    tableGradient: true,
-    temperatureMeasures: ["min", "max"]
+    tableGradient: true
   };
   const url = buildShareUrl(settings, "https://example.test/weathercompare/?old=1");
   assert.deepEqual(settingsFromUrl(url, now), settings);
 });
 
-test("temperature defaults follow visible count, while manual choices survive count changes", () => {
-  assert.deepEqual(resolveTemperatureMeasures(null, 1), ["min", "avg", "max"]);
-  assert.deepEqual(resolveTemperatureMeasures(null, 3), ["avg"]);
-  assert.deepEqual(resolveTemperatureMeasures(["max"], 1), ["max"]);
-  assert.deepEqual(resolveTemperatureMeasures(["max"], 3), ["max"]);
-  assert.equal(normalizeSettings({ temperatureMeasures: ["bogus"] }).temperatureMeasures, null);
-  assert.equal(normalizeSettings({ temperatureMeasures: [] }).temperatureMeasures, null);
-  assert.equal(settingsFromUrl("https://example.test/?view=graph").temperatureMeasures, null);
+test("legacy measure selections cannot hide temperature panels", () => {
+  assert.ok(!("temperatureMeasures" in normalizeSettings({ temperatureMeasures: ["avg"] })));
+  assert.ok(!("temperatureMeasures" in settingsFromUrl("https://example.test/?view=graph&temperature=max")));
   const defaults = createDefaultSettings(now);
   assert.deepEqual(settingsFromUrl(buildShareUrl(defaults, "https://example.test/"), now), defaults);
+  const legacy = { ...defaults, temperatureMeasures: ["max"] };
+  assert.equal(new URL(buildShareUrl(legacy, "https://example.test/")).searchParams.has("temperature"), false);
 });
 
 test("validation reports date ordering and empty locations", () => {
