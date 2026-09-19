@@ -26,8 +26,7 @@ function render() {
     }))
   }));
   renderDashboard(document.querySelector('#dashboard'), series, settings,
-    (metric, button) => popout.open(metric, series, null, button),
-    (view) => { settings.temperatureView = view; render(); });
+    (metric, button) => popout.open(metric, series, null, button));
 }
 document.querySelectorAll('[data-count]').forEach(button => button.onclick = () => { count = Number(button.dataset.count); render(); });
 document.querySelector('#missing').onclick = () => { missing = !missing; render(); };

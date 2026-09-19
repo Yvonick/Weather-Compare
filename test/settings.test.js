@@ -91,18 +91,18 @@ test("legacy measure selections cannot hide temperature panels", () => {
   assert.equal(new URL(buildShareUrl(legacy, "https://example.test/")).searchParams.has("temperature"), false);
 });
 
-test("temperature layout defaults to Combined and preserves explicit Separate choices", () => {
+test("temperature layout stays Combined while Separate is unavailable", () => {
   assert.equal(createDefaultSettings(now).temperatureView, "combined");
   assert.equal(normalizeSettings({ temperatureView: "invalid" }, now).temperatureView, "combined");
   assert.equal(normalizeSettings({}, now).temperatureView, "combined");
   assert.equal(settingsFromUrl("https://example.test/?view=graph&temperature=max", now).temperatureView, "combined");
-  assert.equal(settingsFromUrl("https://example.test/?temperatureView=separate", now).temperatureView, "separate");
-  assert.equal(loadSettings({ url: "https://example.test/", storage: { getItem: () => JSON.stringify({ temperatureView: "separate" }) }, now }).temperatureView, "separate");
+  assert.equal(settingsFromUrl("https://example.test/?temperatureView=separate", now).temperatureView, "combined");
+  assert.equal(loadSettings({ url: "https://example.test/", storage: { getItem: () => JSON.stringify({ temperatureView: "separate" }) }, now }).temperatureView, "combined");
   assert.equal(normalizeSettings({ temperatureView: "combined" }, now).temperatureView, "combined");
-  const url = new URL(buildShareUrl({ ...createDefaultSettings(now), rangeFocus: 3, rangeLocked: true, inspectKey: "test" }, "https://example.test/"));
+  const url = new URL(buildShareUrl({ ...createDefaultSettings(now), rangeFocus: 3, rangeLocks: [3, 4], inspectKey: "test" }, "https://example.test/"));
   assert.equal(url.searchParams.get("temperatureView"), "combined");
   assert.equal(url.searchParams.has("rangeFocus"), false);
-  assert.equal(url.searchParams.has("rangeLocked"), false);
+  assert.equal(url.searchParams.has("rangeLocks"), false);
   assert.equal(url.searchParams.has("inspectKey"), false);
   assert.equal(new URL(buildShareUrl({ ...createDefaultSettings(now), temperatureView: undefined }, "https://example.test/")).searchParams.get("temperatureView"), "combined");
 });

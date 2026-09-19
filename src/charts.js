@@ -222,15 +222,21 @@ export function combinedTemperatureMetric(granularity = "day") {
   return { id: "temperatureAvg", title: "Average temperature and min–max range", unit: "°C", digits: 1, type: "envelope", minKey: "temperatureMin", maxKey: "temperatureMax", bucketMinutes };
 }
 
-export function temperatureBandIndices(series, selectedIndex) {
+export function temperatureBandIndices(series, selectedIndex, locked = []) {
   if (series.length <= 2) return series.map((location) => location.styleIndex);
+  const visibleLocks = [...new Set(locked)].filter((id) => series.some((location) => location.styleIndex === id)).slice(0, 2);
+  if (visibleLocks.length) return visibleLocks;
   return [series.some((location) => location.styleIndex === selectedIndex) ? selectedIndex : series[0].styleIndex];
 }
 
-// Preview/focus never overrides a lock; an explicit click toggles or transfers it.
+// Inspection moves freely; only explicit clicks alter the (at most two) locks.
 export function temperatureSelection(state, index, toggle = false) {
-  if (toggle) return { priority: index, locked: state.locked === index ? null : index };
-  return { ...state, priority: state.locked ?? index };
+  let locked = [...state.locked];
+  if (toggle) {
+    if (locked.includes(index)) locked = locked.filter((id) => id !== index);
+    else if (locked.length < 2) locked.push(index);
+  }
+  return { priority: index, locked };
 }
 
 // Break at missing buckets; bridge adjacent historical/forecast samples only.
@@ -329,7 +335,7 @@ export function renderChartFrame(container, metric, series, highlightIndex, { zo
     width,
     height,
     role: "img",
-    "aria-label": `${metric.title} historical and forecast line chart${combined ? ". Bands show within-period extrema, not forecast uncertainty. Use the location and date controls for exact values." : ""}`
+    "aria-label": `${metric.title} historical and forecast line chart${combined ? ". Bands show within-period extrema, not forecast uncertainty. Hover or tap a point for exact values." : ""}`
   });
 
   renderThresholdBands(svg, metric, scale, yFor, margin.left, margin.top, plotWidth, plotHeight);
@@ -464,66 +470,67 @@ export function renderChartFrame(container, metric, series, highlightIndex, { zo
   }, { passive: true });
   if (combined) {
     const controls = create("div", "combined-controls");
-    const hint = create("p", "combined-hint", `Line: average. Band: minimum–maximum within each time bucket, not forecast uncertainty. Dashed lines: forecast. ${series.length <= 2 ? "Both ranges are visible." : "Only the priority location's range is shown."}`);
+    const hint = create("p", "combined-hint", `Line: average. Band: minimum–maximum within each time bucket, not forecast uncertainty. Dashed lines: forecast. ${series.length <= 2 ? "Both ranges are visible." : "Lock up to two locations to compare their ranges."}`);
     if (series.length === 1) hint.textContent = hint.textContent.replace("Both ranges", "The range").replace("are visible", "is visible");
     const locations = create("div", "combined-locations");
     locations.setAttribute("role", "group");
-    locations.setAttribute("aria-label", "Inspect temperature by location");
-    const dateLabel = create("label", "combined-date");
-    dateLabel.append(create("span", null, "Inspect date / period"));
-    const dateSelect = create("select");
-    keys.forEach((key) => {
-      const option = create("option", null, rowForKey.get(key)?.label || key);
-      option.value = key;
-      dateSelect.append(option);
-    });
+    locations.setAttribute("aria-label", "Lock up to two locations");
     const savedFocusVisible = series.some((location) => location.styleIndex === metric.rangeFocus);
     let preferred = savedFocusVisible ? metric.rangeFocus
       : series.some((location) => location.styleIndex === highlightIndex) ? highlightIndex : series[0].styleIndex;
     let focused = null;
-    let selection = { priority: preferred, locked: savedFocusVisible && metric.rangeLocked ? preferred : null };
+    let selection = { priority: preferred, locked: [...new Set(metric.rangeLocks || [])].filter((id) => series.some((location) => location.styleIndex === id)).slice(0, 2) };
+    let inspectedIndex = series.some((location) => location.styleIndex === metric.inspectLocation) ? metric.inspectLocation : preferred;
+    let inspectedKey = keys.includes(metric.inspectKey) ? metric.inspectKey : keys[0];
     const lockStatus = create("p", "combined-lock-status");
     lockStatus.setAttribute("role", "status");
-    dateSelect.value = keys.includes(metric.inspectKey) ? metric.inspectKey : keys[0];
     const readout = create("p", "combined-readout");
     readout.setAttribute("role", "status");
     readout.setAttribute("aria-live", "polite");
+    const inspectionMarker = svgNode("circle", { class: "inspection-marker", r: 9, fill: "none", stroke: "#111", "stroke-width": 2, "aria-hidden": "true", "pointer-events": "none" });
+    svg.append(inspectionMarker);
     const buttons = new Map();
-    const update = (index, toggle = false) => {
-      selection = temperatureSelection(selection, index, toggle);
-      index = selection.priority;
-      const visibleBands = temperatureBandIndices(series, index);
+    const update = (limitReached = false) => {
+      const index = selection.priority;
+      const visibleBands = temperatureBandIndices(series, index, selection.locked);
       bandNodes.forEach((node, id) => { node.style.display = visibleBands.includes(id) ? "" : "none"; });
-      lineNodes.forEach((node, id) => { node.style.opacity = series.length > 2 && id !== index ? ".5" : "1"; });
+      lineNodes.forEach((node, id) => { node.style.opacity = series.length > 2 && !visibleBands.includes(id) ? ".5" : "1"; });
       buttons.forEach((button, id) => {
-        const locked = id === selection.locked;
+        const locked = selection.locked.includes(id);
         button.setAttribute("aria-pressed", String(locked));
         button.querySelector(".combined-lock-badge").hidden = !locked;
-        button.setAttribute("aria-label", `${locked ? "Unlock" : "Lock"} priority location: ${series.find((entry) => entry.styleIndex === id).label}`);
-        button.classList.toggle("is-previewed", id === index);
+        button.setAttribute("aria-label", `${locked ? "Unlock" : "Lock"} location: ${series.find((entry) => entry.styleIndex === id).label}`);
+        button.classList.toggle("is-previewed", !selection.locked.length && id === index);
       });
-      const lockText = selection.locked === null
-        ? "Hover or focus to preview. Click a location to lock it."
-        : `Priority locked to ${locationDisplayName(series.find((entry) => entry.styleIndex === selection.locked), series)}. Click it again to unlock, or click another location to switch the lock.`;
+      const lockText = limitReached ? "Two locations are locked. Deselect one to choose another." : `${selection.locked.length} / 2 locations locked`;
       if (lockStatus.textContent !== lockText) lockStatus.textContent = lockText;
-      const location = series.find((entry) => entry.styleIndex === index);
-      const row = location.rows.find((entry) => entry.key === dateSelect.value);
-      readout.textContent = row ? tooltipText(location, row, metric) : `${location.label} · ${dateSelect.selectedOptions[0].textContent} · No data for this period.`;
+      const location = series.find((entry) => entry.styleIndex === inspectedIndex);
+      const row = location.rows.find((entry) => entry.key === inspectedKey);
+      readout.textContent = row ? tooltipText(location, row, metric) : `${location.label} · ${rowForKey.get(inspectedKey)?.label || inspectedKey} · No data for this period.`;
+      inspectionMarker.style.display = Number.isFinite(row?.[metric.id]) ? "" : "none";
+      inspectionMarker.setAttribute("cx", xFor(keys.indexOf(inspectedKey)));
+      if (Number.isFinite(row?.[metric.id])) inspectionMarker.setAttribute("cy", yFor(row[metric.id]));
       const hasRange = location.rows.some((entry) => validRange(entry, metric.minKey, metric.maxKey));
       if (!hasRange) readout.textContent += " · No min–max range is available for this location; average values remain visible.";
     };
     inspectPoint = (index, bucketIndex, toggle = false) => {
-      if (!toggle && selection.locked !== null && selection.locked !== index) return;
-      if (Number.isInteger(bucketIndex)) dateSelect.value = keys[bucketIndex];
-      metric.inspectKey = dateSelect.value;
-      update(index, toggle);
+      const limitReached = toggle && selection.locked.length === 2 && !selection.locked.includes(index);
+      inspectedIndex = index;
+      if (Number.isInteger(bucketIndex)) inspectedKey = keys[bucketIndex];
+      metric.inspectKey = inspectedKey;
+      metric.inspectLocation = index;
+      selection = temperatureSelection(selection, index, toggle);
       if (toggle) {
         preferred = index;
         metric.rangeFocus = index;
-        metric.rangeLocked = selection.locked !== null;
+        metric.rangeLocks = [...selection.locked];
       }
+      update(limitReached);
     };
-    restoreRange = () => update(focused ?? preferred);
+    restoreRange = () => {
+      selection = temperatureSelection(selection, focused ?? preferred);
+      update();
+    };
     for (const location of series) {
       const button = create("button", "combined-location");
       button.type = "button";
@@ -531,27 +538,47 @@ export function renderChartFrame(container, metric, series, highlightIndex, { zo
       const style = SERIES_STYLES[location.styleIndex % SERIES_STYLES.length];
       const swatch = create("i", `comparison-marker is-${style.marker}`);
       swatch.style.background = style.color;
-      const badge = create("span", "combined-lock-badge", "Locked · click to unlock");
+      const badge = create("span", "combined-lock-badge", "Locked");
       badge.hidden = true;
       button.append(swatch, document.createTextNode(locationDisplayName(location, series)), badge);
-      button.addEventListener("pointerenter", (event) => { if (event.pointerType !== "touch") update(location.styleIndex); });
+      button.addEventListener("pointerenter", (event) => { if (event.pointerType !== "touch") inspectPoint(location.styleIndex); });
       button.addEventListener("pointerleave", () => restoreRange());
-      button.addEventListener("focus", () => { focused = location.styleIndex; update(focused); });
+      button.addEventListener("focus", () => { focused = location.styleIndex; inspectPoint(focused); });
       button.addEventListener("blur", () => { focused = null; restoreRange(); });
       button.addEventListener("click", () => inspectPoint(location.styleIndex, undefined, true));
       buttons.set(location.styleIndex, button);
       locations.append(button);
     }
-    dateSelect.addEventListener("change", () => {
-      metric.inspectKey = dateSelect.value;
-      update(selection.priority);
-      scroll.scrollLeft = Math.max(0, xFor(keys.indexOf(dateSelect.value)) - scroll.clientWidth / 2);
+    const keyboardHint = create("p", "combined-keyboard-hint", "← → dates · ↑ ↓ locations");
+    scroll.setAttribute("aria-label", `${metric.title}. Use left and right arrow keys for dates, up and down for locations, Home or End for the first or last date.`);
+    scroll.addEventListener("keydown", (event) => {
+      if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      let bucketIndex = keys.indexOf(inspectedKey);
+      let locationIndex = series.findIndex((location) => location.styleIndex === inspectedIndex);
+      if (event.key === 'ArrowLeft') bucketIndex--;
+      if (event.key === 'ArrowRight') bucketIndex++;
+      if (event.key === 'ArrowUp') locationIndex--;
+      if (event.key === 'ArrowDown') locationIndex++;
+      if (event.key === 'Home') bucketIndex = 0;
+      if (event.key === 'End') bucketIndex = keys.length - 1;
+      bucketIndex = Math.max(0, Math.min(keys.length - 1, bucketIndex));
+      locationIndex = Math.max(0, Math.min(series.length - 1, locationIndex));
+      inspectPoint(series[locationIndex].styleIndex, bucketIndex);
+      scroll.scrollLeft = Math.max(0, xFor(bucketIndex) - scroll.clientWidth / 2);
+      const value = series[locationIndex].rows.find((row) => row.key === keys[bucketIndex])?.[metric.id];
+      if (Number.isFinite(value)) {
+        const y = yFor(value);
+        if (y < scroll.scrollTop + 16 || y > scroll.scrollTop + scroll.clientHeight - 16) {
+          scroll.scrollTop = Math.max(0, y - scroll.clientHeight / 2);
+        }
+      }
     });
-    dateLabel.append(dateSelect);
-    controls.append(hint, locations, lockStatus, dateLabel);
+    frame.append(keyboardHint);
+    controls.append(hint, locations, lockStatus);
     container.prepend(controls);
     container.append(readout);
-    update(preferred);
+    update();
   }
   return frame;
 }
@@ -734,7 +761,7 @@ export function temperatureChartMetrics(series) {
   return measures.map((key) => ({ ...definitions[key], unit: "°C", digits: 1, sharedScale }));
 }
 
-function renderGroup(group, series, settings, onPopout, onTemperatureViewChange) {
+function renderGroup(group, series, settings, onPopout) {
   const displayGroup = group;
   const article = create("article", "panel metric-panel");
   const intro = create("div", "panel-intro");
@@ -742,23 +769,6 @@ function renderGroup(group, series, settings, onPopout, onTemperatureViewChange)
   titleWrap.append(create("p", "eyebrow", displayGroup.eyebrow), create("h2", null, displayGroup.title));
   intro.append(titleWrap, create("p", "description", displayGroup.description));
   article.append(intro);
-  if (group.id === "temperature" && settings.view === "graph") {
-    const modes = create("fieldset", "temperature-view-switch");
-    modes.append(create("legend", null, "Temperature layout"));
-    for (const [value, label] of [["separate", "Separate"], ["combined", "Combined"]]) {
-      const field = create("label");
-      const radio = create("input");
-      radio.type = "radio";
-      radio.name = "temperature-view";
-      radio.value = value;
-      radio.dataset.temperatureView = value;
-      radio.checked = value === (settings.temperatureView === "separate" ? "separate" : "combined");
-      radio.addEventListener("change", () => onTemperatureViewChange(value));
-      field.append(radio, document.createTextNode(label));
-      modes.append(field);
-    }
-    article.append(modes);
-  }
   if (displayGroup.id === "air" && settings.view === "graph") {
     const note = create("p", "method-note");
     note.innerHTML = 'Threshold guides follow the <a href="https://airindex.eea.europa.eu/AQI/index.html" target="_blank" rel="noreferrer">EEA European AQI methodology</a>.';
@@ -777,23 +787,8 @@ function renderGroup(group, series, settings, onPopout, onTemperatureViewChange)
     article.append(tableHead);
     article.append(renderTable(displayGroup, series, settings.tableGradient));
   } else {
-    if (group.id === "temperature" && settings.temperatureView === "separate") {
-      article.append(create("p", "method-note", "Minimum, average, and maximum are shown below on three aligned charts with the same temperature scale."));
-      const key = create("div", "comparison-key");
-      key.setAttribute("aria-label", "Location colors");
-      for (const location of series) {
-        const style = SERIES_STYLES[location.styleIndex % SERIES_STYLES.length];
-        const item = create("span");
-        const marker = create("i", `comparison-marker is-${style.marker}`);
-        marker.style.background = style.color;
-        item.title = location.label;
-        item.append(marker, document.createTextNode(locationDisplayName(location, series)));
-        key.append(item);
-      }
-      article.append(key);
-    }
     const metrics = group.id === "temperature"
-      ? settings.temperatureView === "separate" ? temperatureChartMetrics(series) : [combinedTemperatureMetric(settings.granularity)]
+      ? [combinedTemperatureMetric(settings.granularity)]
       : displayGroup.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
     const grid = create("div", `chart-grid ${metrics.length === 1 || group.id === "temperature" ? "single" : ""}`);
     metrics.forEach((metric) => grid.append(renderChartCard(metric, series, settings.highlightLocation, onPopout)));
@@ -802,10 +797,10 @@ function renderGroup(group, series, settings, onPopout, onTemperatureViewChange)
   return article;
 }
 
-export function renderDashboard(container, series, settings, onPopout, onTemperatureViewChange) {
+export function renderDashboard(container, series, settings, onPopout) {
   const sourcePanel = container.querySelector("#sources-panel");
   container.querySelectorAll(".metric-panel").forEach((panel) => panel.remove());
-  METRIC_GROUPS.forEach((group) => container.insertBefore(renderGroup(group, series, settings, onPopout, onTemperatureViewChange), sourcePanel));
+  METRIC_GROUPS.forEach((group) => container.insertBefore(renderGroup(group, series, settings, onPopout), sourcePanel));
 }
 
 export function createChartPopout(dialog) {
@@ -874,7 +869,7 @@ export function createChartPopout(dialog) {
 
   return {
     open(metric, series, highlightIndex, sourceButton) {
-      state = { metric: { ...metric }, series, highlightIndex, zoom: 1 };
+      state = { metric: { ...metric, rangeLocks: [...(metric.rangeLocks || [])] }, series, highlightIndex, zoom: 1 };
       trigger = sourceButton;
       title.textContent = metric.title;
       unit.textContent = `Magnified visualization · ${metric.unit}`;

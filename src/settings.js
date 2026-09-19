@@ -72,7 +72,7 @@ export function normalizeSettings(candidate = {}, now = new Date()) {
     granularity: ["day", "12h", "6h", "3h", "1h", "30m"].includes(candidate.granularity) ? candidate.granularity : fallback.granularity,
     view: ["graph", "table"].includes(candidate.view) ? candidate.view : fallback.view,
     tableGradient: candidate.tableGradient === true || candidate.tableGradient === 1 || candidate.tableGradient === "1" || candidate.tableGradient === "true",
-    temperatureView: candidate.temperatureView === "separate" ? "separate" : "combined"
+    temperatureView: "combined"
   };
 }
 
@@ -134,7 +134,7 @@ export function buildShareUrl(settings, baseUrl) {
   url.searchParams.set("granularity", settings.granularity);
   url.searchParams.set("view", settings.view);
   url.searchParams.set("gradient", settings.tableGradient ? "1" : "0");
-  url.searchParams.set("temperatureView", settings.temperatureView === "separate" ? "separate" : "combined");
+  url.searchParams.set("temperatureView", "combined");
   if (Number.isInteger(settings.highlightLocation)) url.searchParams.set("highlight", String(settings.highlightLocation));
   return url.toString();
 }

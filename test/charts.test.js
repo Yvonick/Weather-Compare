@@ -132,21 +132,29 @@ test("band selection uses stable location IDs and adapts to visible count", () =
   assert.deepEqual(temperatureBandIndices([], null), []);
 });
 
-test("temperature priority previews only while unlocked and toggles on explicit clicks", () => {
-  let state = { priority: 0, locked: null };
+test("up to two ranges stay locked while inspection moves freely", () => {
+  let state = { priority: 0, locked: [] };
   state = temperatureSelection(state, 4);
-  assert.deepEqual(state, { priority: 4, locked: null });
+  assert.deepEqual(state, { priority: 4, locked: [] });
   state = temperatureSelection(state, 0, true);
-  assert.deepEqual(state, { priority: 0, locked: 0 });
-  // A valid zero ID must block hover, focus, and restore attempts alike.
-  assert.deepEqual(temperatureSelection(state, 8), state);
-  assert.deepEqual(temperatureSelection(state, 4), state);
-  state = temperatureSelection(state, 0, true);
-  assert.deepEqual(state, { priority: 0, locked: null });
-  assert.deepEqual(temperatureSelection(state, 8), { priority: 8, locked: null });
   state = temperatureSelection(state, 4, true);
+  assert.deepEqual(state, { priority: 4, locked: [0, 4] });
+  const series = [0, 4, 8].map((styleIndex) => ({ styleIndex }));
+  const hovered = temperatureSelection(state, 8);
+  assert.deepEqual(hovered, { priority: 8, locked: [0, 4] });
+  assert.deepEqual(temperatureBandIndices(series, hovered.priority, hovered.locked), [0, 4]);
+  // A third lock cannot evict an existing pair, but its data can be inspected.
   state = temperatureSelection(state, 8, true);
-  assert.deepEqual(state, { priority: 8, locked: 8 });
+  assert.deepEqual(state, { priority: 8, locked: [0, 4] });
+  state = temperatureSelection(state, 0, true);
+  assert.deepEqual(state, { priority: 0, locked: [4] });
+  assert.deepEqual(temperatureBandIndices(series, 8, state.locked), [4]);
+  state = temperatureSelection(state, 4, true);
+  assert.deepEqual(state, { priority: 4, locked: [] });
+  state = temperatureSelection(state, 8, true);
+  assert.deepEqual(state, { priority: 8, locked: [8] });
+  assert.deepEqual(temperatureBandIndices(series, 0, [99, 4, 4]), [4]);
+  assert.deepEqual(temperatureBandIndices(series.slice(0, 2), 0, [0]), [0, 4]);
 });
 
 test("combined readout omits generic grid and range-label clutter but keeps useful context", () => {
