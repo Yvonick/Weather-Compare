@@ -1141,6 +1141,13 @@ function tooltipText(location, row, metric) {
   return `${location.label} · ${row.label} · ${forecastContext}${metric.title}: ${formatNumber(row[metric.id], metric.digits)} ${metric.unit}${source}`;
 }
 
+function temperatureReadoutText(location, row, metric, dateLabel = row?.label || "") {
+  const title = (location.label || location.query || "Location").split(",")[0].trim();
+  const temperatures = [["Min", metric.minKey], ["Avg", metric.id], ["Max", metric.maxKey]]
+    .map(([label, key]) => `${label} ${Number.isFinite(row?.[key]) ? `${formatNumber(row[key], metric.digits)} ${metric.unit}` : "—"}`);
+  return [title, ...temperatures, dateLabel].filter(Boolean).join(" · ");
+}
+
 function attachTooltip(target, frame, text) {
   target.setAttribute("tabindex", "0");
   target.setAttribute("aria-label", text);
@@ -1541,12 +1548,10 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
       if (lockStatus.textContent !== lockText) lockStatus.textContent = lockText;
       const location = series.find((entry) => entry.styleIndex === inspectedIndex);
       const row = location.rows.find((entry) => entry.key === inspectedKey);
-      readout.textContent = row ? tooltipText(location, row, metric) : `${location.label} · ${rowForKey.get(inspectedKey)?.label || inspectedKey} · No data for this period.`;
+      readout.textContent = temperatureReadoutText(location, row, metric, row?.label || rowForKey.get(inspectedKey)?.label || inspectedKey);
       inspectionMarker.style.display = Number.isFinite(row?.[metric.id]) ? "" : "none";
       inspectionMarker.setAttribute("cx", xFor(keys.indexOf(inspectedKey)));
       if (Number.isFinite(row?.[metric.id])) inspectionMarker.setAttribute("cy", yFor(row[metric.id]));
-      const hasRange = location.rows.some((entry) => validRange(entry, metric.minKey, metric.maxKey));
-      if (!hasRange) readout.textContent += " · No min–max range is available for this location; average values remain visible.";
     };
     inspectPoint = (index, bucketIndex, toggle = false) => {
       const limitReached = toggle && selection.locked.length === 2 && !selection.locked.includes(index);

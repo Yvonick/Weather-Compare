@@ -206,7 +206,7 @@ tbody tr.is-location-start > th, tbody tr.is-location-start > td { border-top: 4
 .combined-lock-badge { font-size: .75rem; font-weight: 600; color: var(--green); }
 .combined-lock-badge[hidden] { display: none; }
 .combined-lock-status { margin: 0; font-size: .875rem; color: var(--green); }
-.combined-readout { margin: 0; padding: .5rem .65rem; min-height: 3.5em; border-left: 3px solid var(--green); background: #fff; color: var(--ink); font-size: .875rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.combined-readout { margin: 0; padding: .5rem .65rem; min-height: 3.5em; border-left: 3px solid var(--green); background: #fff; color: var(--ink); font-size: 1rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .inspection-marker { visibility: hidden; }
 .chart-scroll:focus-visible .inspection-marker { visibility: visible; }
 .combined-keyboard-hint { display: none; position: absolute; bottom: .25rem; right: .4rem; margin: 0; padding: .15rem .35rem; background: #fff; color: var(--muted); font-size: .75rem; pointer-events: none; }

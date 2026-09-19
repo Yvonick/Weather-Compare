@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildTableModel, chartScale, chartSegments, chartTickParts, combinedTemperatureMetric, lineDashForKind, tableHeatStyle, temperatureBandIndices, temperatureChartMetrics, temperatureSelection, tooltipText } from "../src/charts.js";
+import { buildTableModel, chartScale, chartSegments, chartTickParts, combinedTemperatureMetric, lineDashForKind, tableHeatStyle, temperatureBandIndices, temperatureChartMetrics, temperatureSelection, temperatureReadoutText, tooltipText } from "../src/charts.js";
 
 const seriesWith = (key, values) => [{
   rows: values.map((value) => ({ [key]: value }))
@@ -157,13 +157,21 @@ test("up to two ranges stay locked while inspection moves freely", () => {
   assert.deepEqual(temperatureBandIndices(series.slice(0, 2), 0, [0]), [0, 4]);
 });
 
-test("combined readout omits generic grid and range-label clutter but keeps useful context", () => {
+test("full tooltip keeps source context separate from the compact readout", () => {
   const row = { label: "19/09/2026", dataKind: "forecast", forecastConfidence: "higher", temperatureMin: 10, temperatureAvg: 15, temperatureMax: 20 };
   const text = tooltipText({ label: "Berlin" }, row, combinedTemperatureMetric());
   assert.doesNotMatch(text, /Source:|Range shown:/);
   assert.match(text, /Berlin.*19\/09\/2026.*Forecast.*higher confidence.*Min.*Avg.*Max/);
   assert.match(tooltipText({ label: "Berlin" }, { ...row, temperatureStationName: "Tempelhof" }, combinedTemperatureMetric()), /Station: Tempelhof/);
   assert.match(tooltipText({ label: "Berlin" }, { ...row, temperatureMin: null }, combinedTemperatureMetric()), /full range unavailable/);
+});
+
+test("temperature readout shows only the resolved place title, temperatures, and date", () => {
+  const location = { label: "Berlin, State of Berlin, Germany", query: "Ber" };
+  const row = { label: "19/09/2026", dataKind: "forecast", forecastConfidence: "higher", temperatureStationName: "Tempelhof", temperatureMin: 0, temperatureAvg: 15.5, temperatureMax: 20 };
+  assert.equal(temperatureReadoutText(location, row, combinedTemperatureMetric()), "Berlin · Min 0,0 °C · Avg 15,5 °C · Max 20,0 °C · 19/09/2026");
+  assert.equal(temperatureReadoutText({ label: "London, England, United Kingdom" }, { ...row, label: "19/09/2026 12:00–15:00", temperatureMin: null, temperatureMax: null }, combinedTemperatureMetric()), "London · Min — · Avg 15,5 °C · Max — · 19/09/2026 12:00–15:00");
+  assert.equal(temperatureReadoutText({ label: "Fulda, Hesse, Germany" }, undefined, combinedTemperatureMetric(), "19/09/2026"), "Fulda · Min — · Avg — · Max — · 19/09/2026");
 });
 
 test("range segments break at absent, incomplete, or reversed ranges", () => {
