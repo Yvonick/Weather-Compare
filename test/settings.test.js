@@ -74,7 +74,8 @@ test("share URLs round-trip all compatibility parameters", () => {
     endDate: "2026-07-02",
     granularity: "12h",
     view: "table",
-    tableGradient: true
+    tableGradient: true,
+    temperatureView: "combined"
   };
   const url = buildShareUrl(settings, "https://example.test/weathercompare/?old=1");
   assert.deepEqual(settingsFromUrl(url, now), settings);
@@ -87,6 +88,17 @@ test("legacy measure selections cannot hide temperature panels", () => {
   assert.deepEqual(settingsFromUrl(buildShareUrl(defaults, "https://example.test/"), now), defaults);
   const legacy = { ...defaults, temperatureMeasures: ["max"] };
   assert.equal(new URL(buildShareUrl(legacy, "https://example.test/")).searchParams.has("temperature"), false);
+});
+
+test("temperature layout defaults to Separate and rejects invalid stored modes", () => {
+  assert.equal(createDefaultSettings(now).temperatureView, "separate");
+  assert.equal(normalizeSettings({ temperatureView: "invalid" }, now).temperatureView, "separate");
+  assert.equal(settingsFromUrl("https://example.test/?view=graph&temperature=max", now).temperatureView, "separate");
+  assert.equal(normalizeSettings({ temperatureView: "combined" }, now).temperatureView, "combined");
+  const url = new URL(buildShareUrl({ ...createDefaultSettings(now), temperatureView: "combined", rangeFocus: 3, inspectKey: "test" }, "https://example.test/"));
+  assert.equal(url.searchParams.get("temperatureView"), "combined");
+  assert.equal(url.searchParams.has("rangeFocus"), false);
+  assert.equal(url.searchParams.has("inspectKey"), false);
 });
 
 test("validation reports date ordering and empty locations", () => {

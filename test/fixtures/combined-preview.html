@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Combined chart UI test — synthetic data</title>
+<link rel="stylesheet" href="../../styles.css">
+<style>body{overflow:auto;padding:1rem}html{overflow:auto;height:auto}#dashboard{overflow:visible}.fixture-tools{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem}</style>
+<h1>UI test fixture — synthetic weather</h1>
+<div class="fixture-tools"><button data-count="1">One location</button><button data-count="2">Two locations</button><button data-count="3">Three locations</button><button id="missing">Toggle missing ranges</button></div>
+<section id="dashboard" class="dashboard" aria-label="Weather comparison"></section>
+<dialog id="chart-popout" class="chart-popout" aria-labelledby="popout-title"><div class="popout-shell"><header class="popout-head"><div><p data-popout-unit class="eyebrow"></p><h2 id="popout-title" data-popout-title></h2></div><div class="popout-actions"><button data-zoom-out aria-label="Zoom out graph">Zoom out</button><button data-zoom-in aria-label="Zoom in graph">Zoom in</button><button data-zoom-reset>Reset</button><button data-popout-close>Close</button></div></header><div data-popout-body class="popout-body"></div></div></dialog>
+<script type="module">
+import { renderDashboard, createChartPopout } from '../../src/charts.js';
+let count = 3, missing = false;
+const settings = { view: 'graph', temperatureView: 'combined', highlightLocation: null };
+const popout = createChartPopout(document.querySelector('dialog'));
+function render() {
+  const series = ['Alpha', 'Beta', 'Gamma'].slice(0, count).map((label, location) => ({
+    label: `${label}, Test region`, query: label, styleIndex: [1, 4, 8][location],
+    rows: Array.from({length: 10}, (_, i) => ({
+      key: `2026-09-${String(i + 10).padStart(2,'0')}`, label: `${i + 10}/09/2026`,
+      dataKind: i < 5 ? 'historical' : 'forecast', forecastConfidence: 'higher',
+      temperatureAvg: 16 + Math.sin(i) * 3 + location * 3,
+      temperatureMin: missing || i === 3 ? null : 12 + Math.sin(i) * 3 + location * 3,
+      temperatureMax: missing || i === 3 ? null : 22 + Math.sin(i) * 3 + location * 3
+    }))
+  }));
+  renderDashboard(document.querySelector('#dashboard'), series, settings,
+    (metric, button) => popout.open(metric, series, null, button),
+    (view) => { settings.temperatureView = view; render(); });
+}
+document.querySelectorAll('[data-count]').forEach(button => button.onclick = () => { count = Number(button.dataset.count); render(); });
+document.querySelector('#missing').onclick = () => { missing = !missing; render(); };
+render();
+</script>
+</html>

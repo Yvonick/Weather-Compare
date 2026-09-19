@@ -186,7 +186,8 @@ function createDefaultSettings(now = new Date()) {
     endDate: shiftDate(today, 6),
     granularity: "day",
     view: "graph",
-    tableGradient: false
+    tableGradient: false,
+    temperatureView: "separate"
   };
 }
 
@@ -211,7 +212,8 @@ function normalizeSettings(candidate = {}, now = new Date()) {
     endDate: isDateString(candidate.endDate) ? candidate.endDate : fallback.endDate,
     granularity: ["day", "12h", "6h", "3h", "1h", "30m"].includes(candidate.granularity) ? candidate.granularity : fallback.granularity,
     view: ["graph", "table"].includes(candidate.view) ? candidate.view : fallback.view,
-    tableGradient: candidate.tableGradient === true || candidate.tableGradient === 1 || candidate.tableGradient === "1" || candidate.tableGradient === "true"
+    tableGradient: candidate.tableGradient === true || candidate.tableGradient === 1 || candidate.tableGradient === "1" || candidate.tableGradient === "true",
+    temperatureView: candidate.temperatureView === "combined" ? "combined" : "separate"
   };
 }
 
@@ -253,7 +255,8 @@ function settingsFromUrl(url, now = new Date()) {
     endDate: params.get("end"),
     granularity: params.get("granularity"),
     view: params.get("view"),
-    tableGradient: params.get("gradient")
+    tableGradient: params.get("gradient"),
+    temperatureView: params.get("temperatureView")
   }, now);
 }
 
@@ -272,6 +275,7 @@ function buildShareUrl(settings, baseUrl) {
   url.searchParams.set("granularity", settings.granularity);
   url.searchParams.set("view", settings.view);
   url.searchParams.set("gradient", settings.tableGradient ? "1" : "0");
+  url.searchParams.set("temperatureView", settings.temperatureView === "combined" ? "combined" : "separate");
   if (Number.isInteger(settings.highlightLocation)) url.searchParams.set("highlight", String(settings.highlightLocation));
   return url.toString();
 }
@@ -1086,7 +1090,7 @@ function chartScale(metric, series) {
   for (const location of series) {
     for (const row of location.rows) {
       if (Number.isFinite(row[metric.id])) values.push(row[metric.id]);
-      if (metric.type === "range") {
+      if (metric.type === "range" || metric.type === "envelope") {
         if (Number.isFinite(row[metric.minKey])) values.push(row[metric.minKey]);
         if (Number.isFinite(row[metric.maxKey])) values.push(row[metric.maxKey]);
       }
@@ -1114,16 +1118,20 @@ function chartScale(metric, series) {
   return { min, max, ticks, tickDigits };
 }
 
+function validRange(row, minKey, maxKey) {
+  return row && Number.isFinite(row[minKey]) && Number.isFinite(row[maxKey]) && row[minKey] <= row[maxKey];
+}
+
 function tooltipText(location, row, metric) {
   const forecastContext = row.dataKind === "forecast"
     ? `Forecast · ${row.forecastConfidence || "unknown"} confidence (lead-time guide) · `
     : "Historical · ";
-  if (metric.type === "range") {
+  if (metric.type === "range" || metric.type === "envelope") {
     const sourceContext = row.temperatureStationName
       ? ` · Station: ${row.temperatureStationName}${Number.isFinite(row.temperatureStationDistanceKm) ? ` (${formatNumber(row.temperatureStationDistanceKm, 1)} km)` : ""}`
-      : " · Source: Open-Meteo grid (no station range)";
-    if (!Number.isFinite(row[metric.minKey]) || !Number.isFinite(row[metric.maxKey])) {
-      return `${location.label} · ${row.label} · ${forecastContext}Sample ${formatNumber(row[metric.id], metric.digits)} ${metric.unit} · range unavailable${sourceContext}`;
+      : " · Source: Open-Meteo grid";
+    if (!validRange(row, metric.minKey, metric.maxKey)) {
+      return `${location.label} · ${row.label} · ${forecastContext}Min ${formatNumber(row[metric.minKey], metric.digits)} · Avg ${formatNumber(row[metric.id], metric.digits)} · Max ${formatNumber(row[metric.maxKey], metric.digits)} ${metric.unit} · full range unavailable${sourceContext}`;
     }
     return `${location.label} · ${row.label} · ${forecastContext}Min ${formatNumber(row[metric.minKey], metric.digits)} ${metric.unit} · Avg ${formatNumber(row[metric.id], metric.digits)} ${metric.unit} · Max ${formatNumber(row[metric.maxKey], metric.digits)} ${metric.unit}${sourceContext}`;
   }
@@ -1244,8 +1252,67 @@ function renderYAxis(scale, yFor, margin, height) {
   return axis;
 }
 
+function combinedTemperatureMetric(granularity = "day") {
+  const bucketMinutes = { day: 1440, "12h": 720, "6h": 360, "3h": 180, "1h": 60, "30m": 30 }[granularity] || 1440;
+  return { id: "temperatureAvg", title: "Average temperature and min–max range", unit: "°C", digits: 1, type: "envelope", minKey: "temperatureMin", maxKey: "temperatureMax", bucketMinutes };
+}
+
+function temperatureBandIndices(series, selectedIndex) {
+  if (series.length <= 2) return series.map((location) => location.styleIndex);
+  return [series.some((location) => location.styleIndex === selectedIndex) ? selectedIndex : series[0].styleIndex];
+}
+
+// Break at missing buckets; bridge adjacent historical/forecast samples only.
+function chartSegments(keys, rows, valueKeys, bucketMinutes) {
+  const byKey = new Map(rows.map((row) => [row.key, row]));
+  const segments = [];
+  let segment = null;
+  let previous = null;
+  keys.forEach((key, index) => {
+    const row = byKey.get(key);
+    if (previous && bucketMinutes) {
+      const timestamp = (value) => Date.parse(value.includes("T") ? `${value}Z` : `${value}T00:00:00Z`);
+      if (timestamp(key) - timestamp(previous.row.key) > bucketMinutes * 60000) { segment = null; previous = null; }
+    }
+    const valid = row && valueKeys.every((name) => Number.isFinite(row[name]))
+      && (valueKeys.length !== 2 || row[valueKeys[0]] <= row[valueKeys[1]]);
+    if (!valid) { segment = null; previous = null; return; }
+    const point = { index, row };
+    const kind = row.dataKind === "forecast" ? "forecast" : "historical";
+    if (!segment || segment.kind !== kind) {
+      segment = { kind, points: previous ? [previous] : [] };
+      segments.push(segment);
+    }
+    segment.points.push(point);
+    previous = point;
+  });
+  return segments;
+}
+
+function renderTemperatureBand(svg, location, keys, metric, xFor, yFor, color) {
+  const band = svgNode("g", { class: "temperature-band", "data-location-index": location.styleIndex, "aria-hidden": "true" });
+  for (const { kind, points } of chartSegments(keys, location.rows, [metric.minKey, metric.maxKey], metric.bucketMinutes)) {
+    const low = points.map(({ index, row }) => [xFor(index), yFor(row[metric.minKey])]);
+    const high = points.map(({ index, row }) => [xFor(index), yFor(row[metric.maxKey])]);
+    // A singleton still needs visible width; this does not imply an extra sample.
+    if (points.length === 1) {
+      low.push([low[0][0] + 4, low[0][1]]);
+      high.push([high[0][0] + 4, high[0][1]]);
+      low[0][0] -= 4;
+      high[0][0] -= 4;
+    }
+    const line = (points) => points.map(([x, y], index) => `${index ? "L" : "M"} ${x} ${y}`).join(" ");
+    band.append(svgNode("path", { d: `${line(low)} ${line([...high].reverse()).replace(/^M/, "L")} Z`, fill: color, "fill-opacity": .12, "data-kind": kind }));
+    band.append(svgNode("path", { d: `${line(low)} ${line(high)}`, fill: "none", stroke: color, "stroke-opacity": .48, "stroke-width": 1.3, "stroke-dasharray": lineDashForKind(kind), "data-kind": kind }));
+  }
+  svg.append(band);
+  return band;
+}
+
 function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 } = {}) {
   container.replaceChildren();
+  const combined = metric.type === "envelope";
+  container.classList.toggle("combined-chart", combined);
   const frame = create("div", "chart-frame");
   const scroll = create("div", "chart-scroll");
   const tooltip = create("div", "chart-tooltip");
@@ -1259,7 +1326,7 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
     scroll.append(create("p", "empty-state", "No values are available for this chart."));
     return frame;
   }
-  if (!series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id])))) {
+  if (!series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]) || (combined && validRange(row, metric.minKey, metric.maxKey))))) {
     const isExtreme = ["temperatureMin", "temperatureMax"].includes(metric.id);
     scroll.append(create("p", "empty-state", isExtreme
       ? "No temperature extrema are available for these buckets. A single sample cannot establish a minimum or maximum. Try Average, a longer time bucket, or a different date range."
@@ -1291,7 +1358,7 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
     width,
     height,
     role: "img",
-    "aria-label": `${metric.title} historical and forecast line chart`
+    "aria-label": `${metric.title} historical and forecast line chart${combined ? ". Bands show within-period extrema, not forecast uncertainty. Use the location and date controls for exact values." : ""}`
   });
 
   renderThresholdBands(svg, metric, scale, yFor, margin.left, margin.top, plotWidth, plotHeight);
@@ -1323,8 +1390,23 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
     svg.append(label);
   });
 
+  const bandNodes = new Map();
+  const lineNodes = new Map();
+  let inspectPoint = () => {};
+  let restoreRange = () => {};
+  if (combined) {
+    // Every fill sits behind every location's average line and markers.
+    for (const location of series) {
+      const style = SERIES_STYLES[location.styleIndex % SERIES_STYLES.length];
+      bandNodes.set(location.styleIndex, renderTemperatureBand(svg, location, keys, metric, xFor, yFor, style.color));
+    }
+    svg.querySelectorAll(".forecast-axis-label").forEach((label) => svg.append(label));
+  }
   for (const location of series) {
     const style = SERIES_STYLES[location.styleIndex % SERIES_STYLES.length];
+    const seriesLayer = svgNode("g", { class: "chart-series", "data-location-index": location.styleIndex });
+    svg.append(seriesLayer);
+    lineNodes.set(location.styleIndex, seriesLayer);
     const isHighlighted = highlightIndex === location.styleIndex;
     const lineWidth = metric.type === "range"
       ? (isHighlighted ? 4.1 : 2.6)
@@ -1332,6 +1414,8 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
     const opacity = metric.type === "range" ? (isHighlighted ? 0.9 : 0.7) : 1;
     const rowByKey = new Map(location.rows.map((row) => [row.key, row]));
     const buildPath = (kind) => {
+      if (combined) return chartSegments(keys, location.rows, [metric.id], metric.bucketMinutes).filter((segment) => segment.kind === kind)
+        .map((segment) => segment.points.map(({ index, row }, i) => `${i ? "L" : "M"} ${xFor(index)} ${yFor(row[metric.id])}`).join(" ")).join(" ");
       let path = "";
       let drawing = false;
       keys.forEach((key, index) => {
@@ -1350,8 +1434,13 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
     };
     const historicalPath = buildPath("historical");
     const forecastPath = buildPath("forecast");
-    if (historicalPath) svg.append(svgNode("path", { d: historicalPath, fill: "none", stroke: style.color, "stroke-width": lineWidth, "stroke-dasharray": lineDashForKind("historical"), "stroke-linejoin": "round", "stroke-linecap": "round", opacity }));
-    if (forecastPath) svg.append(svgNode("path", { d: forecastPath, fill: "none", stroke: style.color, "stroke-width": lineWidth, "stroke-dasharray": lineDashForKind("forecast"), "stroke-linejoin": "round", "stroke-linecap": "round", opacity: opacity * 0.82 }));
+    if (historicalPath) seriesLayer.append(svgNode("path", { d: historicalPath, fill: "none", stroke: style.color, "stroke-width": lineWidth, "stroke-dasharray": lineDashForKind("historical"), "stroke-linejoin": "round", "stroke-linecap": "round", opacity }));
+    if (forecastPath) seriesLayer.append(svgNode("path", { d: forecastPath, fill: "none", stroke: style.color, "stroke-width": lineWidth, "stroke-dasharray": lineDashForKind("forecast"), "stroke-linejoin": "round", "stroke-linecap": "round", opacity: opacity * 0.82 }));
+    if (combined) {
+      seriesLayer.addEventListener("pointerenter", () => inspectPoint(location.styleIndex));
+      seriesLayer.addEventListener("pointerleave", () => restoreRange());
+      seriesLayer.addEventListener("click", () => inspectPoint(location.styleIndex, undefined, true));
+    }
 
     keys.forEach((key, index) => {
       const row = rowByKey.get(key);
@@ -1385,8 +1474,12 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
           ...commonMarkerAttributes
         })
         : svgNode("circle", { cx: x, cy: y, r: markerRadius, ...commonMarkerAttributes });
-      attachTooltip(marker, frame, tooltipText(location, row, metric));
-      svg.append(marker);
+      if (combined) {
+        marker.setAttribute("data-bucket-index", index);
+        marker.addEventListener("pointerenter", () => inspectPoint(location.styleIndex, index));
+        marker.addEventListener("click", (event) => { event.stopPropagation(); inspectPoint(location.styleIndex, index, true); });
+      } else attachTooltip(marker, frame, tooltipText(location, row, metric));
+      seriesLayer.append(marker);
     });
   }
 
@@ -1398,6 +1491,81 @@ function renderChartFrame(container, metric, series, highlightIndex, { zoom = 1 
   scroll.addEventListener("scroll", () => {
     yAxis.style.transform = `translateY(${-scroll.scrollTop}px)`;
   }, { passive: true });
+  if (combined) {
+    const controls = create("div", "combined-controls");
+    const hint = create("p", "combined-hint", `Line: average. Band: minimum–maximum within each time bucket, not forecast uncertainty. Dashed lines: forecast. ${series.length <= 2 ? "Both ranges are visible." : "Select a location to pin its range; hover or focus to preview another."}`);
+    if (series.length === 1) hint.textContent = hint.textContent.replace("Both ranges", "The range").replace("are visible", "is visible");
+    const locations = create("div", "combined-locations");
+    locations.setAttribute("role", "group");
+    locations.setAttribute("aria-label", "Inspect temperature by location");
+    const dateLabel = create("label", "combined-date");
+    dateLabel.append(create("span", null, "Inspect date / period"));
+    const dateSelect = create("select");
+    keys.forEach((key) => {
+      const option = create("option", null, rowForKey.get(key)?.label || key);
+      option.value = key;
+      dateSelect.append(option);
+    });
+    let pinned = series.some((location) => location.styleIndex === metric.rangeFocus) ? metric.rangeFocus
+      : series.some((location) => location.styleIndex === highlightIndex) ? highlightIndex : series[0].styleIndex;
+    let focused = null;
+    let current = pinned;
+    dateSelect.value = keys.includes(metric.inspectKey) ? metric.inspectKey : keys[0];
+    const readout = create("p", "combined-readout");
+    readout.setAttribute("role", "status");
+    readout.setAttribute("aria-live", "polite");
+    const buttons = new Map();
+    const update = (index) => {
+      current = index;
+      const visibleBands = temperatureBandIndices(series, index);
+      bandNodes.forEach((node, id) => { node.style.display = visibleBands.includes(id) ? "" : "none"; });
+      lineNodes.forEach((node, id) => { node.style.opacity = series.length > 2 && id !== index ? ".5" : "1"; });
+      buttons.forEach((button, id) => {
+        button.setAttribute("aria-pressed", String(id === pinned));
+        button.classList.toggle("is-previewed", id === index);
+      });
+      const location = series.find((entry) => entry.styleIndex === index);
+      const row = location.rows.find((entry) => entry.key === dateSelect.value);
+      readout.textContent = row ? tooltipText(location, row, metric) : `${location.label} · ${dateSelect.selectedOptions[0].textContent} · No data for this period.`;
+      const hasRange = location.rows.some((entry) => validRange(entry, metric.minKey, metric.maxKey));
+      if (series.length > 2 && hasRange) readout.textContent += ` · Range shown: ${locationDisplayName(location, series)}.`;
+      if (!hasRange) readout.textContent += " No min–max range is available for this location; average values remain visible.";
+    };
+    inspectPoint = (index, bucketIndex, pin = false) => {
+      if (Number.isInteger(bucketIndex)) dateSelect.value = keys[bucketIndex];
+      metric.inspectKey = dateSelect.value;
+      if (pin) { pinned = index; metric.rangeFocus = index; }
+      update(index);
+    };
+    restoreRange = () => update(focused ?? pinned);
+    for (const location of series) {
+      const button = create("button", "combined-location");
+      button.type = "button";
+      button.dataset.rangeLocation = location.styleIndex;
+      button.setAttribute("aria-label", `Inspect ${location.label}`);
+      const style = SERIES_STYLES[location.styleIndex % SERIES_STYLES.length];
+      const swatch = create("i", `comparison-marker is-${style.marker}`);
+      swatch.style.background = style.color;
+      button.append(swatch, document.createTextNode(locationDisplayName(location, series)));
+      button.addEventListener("pointerenter", (event) => { if (event.pointerType !== "touch") update(location.styleIndex); });
+      button.addEventListener("pointerleave", () => restoreRange());
+      button.addEventListener("focus", () => { focused = location.styleIndex; update(focused); });
+      button.addEventListener("blur", () => { focused = null; restoreRange(); });
+      button.addEventListener("click", () => inspectPoint(location.styleIndex, undefined, true));
+      buttons.set(location.styleIndex, button);
+      locations.append(button);
+    }
+    dateSelect.addEventListener("change", () => {
+      metric.inspectKey = dateSelect.value;
+      update(current);
+      scroll.scrollLeft = Math.max(0, xFor(keys.indexOf(dateSelect.value)) - scroll.clientWidth / 2);
+    });
+    dateLabel.append(dateSelect);
+    controls.append(hint, locations, dateLabel);
+    container.prepend(controls);
+    container.append(readout);
+    update(pinned);
+  }
   return frame;
 }
 
@@ -1579,7 +1747,7 @@ function temperatureChartMetrics(series) {
   return measures.map((key) => ({ ...definitions[key], unit: "°C", digits: 1, sharedScale }));
 }
 
-function renderGroup(group, series, settings, onPopout) {
+function renderGroup(group, series, settings, onPopout, onTemperatureViewChange) {
   const displayGroup = group;
   const article = create("article", "panel metric-panel");
   const intro = create("div", "panel-intro");
@@ -1587,6 +1755,23 @@ function renderGroup(group, series, settings, onPopout) {
   titleWrap.append(create("p", "eyebrow", displayGroup.eyebrow), create("h2", null, displayGroup.title));
   intro.append(titleWrap, create("p", "description", displayGroup.description));
   article.append(intro);
+  if (group.id === "temperature" && settings.view === "graph") {
+    const modes = create("fieldset", "temperature-view-switch");
+    modes.append(create("legend", null, "Temperature layout"));
+    for (const [value, label] of [["separate", "Separate"], ["combined", "Combined"]]) {
+      const field = create("label");
+      const radio = create("input");
+      radio.type = "radio";
+      radio.name = "temperature-view";
+      radio.value = value;
+      radio.dataset.temperatureView = value;
+      radio.checked = value === (settings.temperatureView || "separate");
+      radio.addEventListener("change", () => onTemperatureViewChange(value));
+      field.append(radio, document.createTextNode(label));
+      modes.append(field);
+    }
+    article.append(modes);
+  }
   if (displayGroup.id === "air" && settings.view === "graph") {
     const note = create("p", "method-note");
     note.innerHTML = 'Threshold guides follow the <a href="https://airindex.eea.europa.eu/AQI/index.html" target="_blank" rel="noreferrer">EEA European AQI methodology</a>.';
@@ -1605,7 +1790,7 @@ function renderGroup(group, series, settings, onPopout) {
     article.append(tableHead);
     article.append(renderTable(displayGroup, series, settings.tableGradient));
   } else {
-    if (group.id === "temperature") {
+    if (group.id === "temperature" && settings.temperatureView !== "combined") {
       article.append(create("p", "method-note", "Minimum, average, and maximum are shown below on three aligned charts with the same temperature scale."));
       const key = create("div", "comparison-key");
       key.setAttribute("aria-label", "Location colors");
@@ -1620,7 +1805,9 @@ function renderGroup(group, series, settings, onPopout) {
       }
       article.append(key);
     }
-    const metrics = group.id === "temperature" ? temperatureChartMetrics(series) : displayGroup.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
+    const metrics = group.id === "temperature"
+      ? settings.temperatureView === "combined" ? [combinedTemperatureMetric(settings.granularity)] : temperatureChartMetrics(series)
+      : displayGroup.metrics.filter((metric) => !metric.forecastOnly || series.some((location) => location.rows.some((row) => Number.isFinite(row[metric.id]))));
     const grid = create("div", `chart-grid ${metrics.length === 1 || group.id === "temperature" ? "single" : ""}`);
     metrics.forEach((metric) => grid.append(renderChartCard(metric, series, settings.highlightLocation, onPopout)));
     article.append(grid);
@@ -1628,10 +1815,10 @@ function renderGroup(group, series, settings, onPopout) {
   return article;
 }
 
-function renderDashboard(container, series, settings, onPopout) {
+function renderDashboard(container, series, settings, onPopout, onTemperatureViewChange) {
   const sourcePanel = container.querySelector("#sources-panel");
   container.querySelectorAll(".metric-panel").forEach((panel) => panel.remove());
-  METRIC_GROUPS.forEach((group) => container.insertBefore(renderGroup(group, series, settings, onPopout), sourcePanel));
+  METRIC_GROUPS.forEach((group) => container.insertBefore(renderGroup(group, series, settings, onPopout, onTemperatureViewChange), sourcePanel));
 }
 
 function createChartPopout(dialog) {
@@ -1645,6 +1832,7 @@ function createChartPopout(dialog) {
   let state = null;
   let trigger = null;
   let drag = null;
+  let dragged = false;
 
   const rerender = () => {
     if (!state) return;
@@ -1677,23 +1865,29 @@ function createChartPopout(dialog) {
   });
   dialog.addEventListener("close", () => trigger?.focus());
   body.addEventListener("pointerdown", (event) => {
-    const scroll = body.querySelector(".chart-scroll");
+    dragged = false;
+    const scroll = event.target.closest(".chart-scroll");
     if (!scroll || event.pointerType !== "mouse" || event.button !== 0) return;
     drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: scroll.scrollLeft, top: scroll.scrollTop, scroll };
-    body.setPointerCapture?.(event.pointerId);
   });
   body.addEventListener("pointermove", (event) => {
     if (!drag || drag.id !== event.pointerId) return;
+    if (!dragged && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 4) return;
+    dragged = true;
+    body.setPointerCapture?.(event.pointerId);
     drag.scroll.scrollLeft = drag.left - (event.clientX - drag.x);
     drag.scroll.scrollTop = drag.top - (event.clientY - drag.y);
   });
   const endDrag = () => { drag = null; };
   body.addEventListener("pointerup", endDrag);
   body.addEventListener("pointercancel", endDrag);
+  body.addEventListener("click", (event) => {
+    if (dragged) { event.preventDefault(); event.stopPropagation(); dragged = false; }
+  }, true);
 
   return {
     open(metric, series, highlightIndex, sourceButton) {
-      state = { metric, series, highlightIndex, zoom: 1 };
+      state = { metric: { ...metric }, series, highlightIndex, zoom: 1 };
       trigger = sourceButton;
       title.textContent = metric.title;
       unit.textContent = `Magnified visualization · ${metric.unit}`;
@@ -1709,6 +1903,7 @@ function createChartPopout(dialog) {
       title.textContent = group.tableTitle;
       unit.textContent = "Expanded table · scroll for more dates";
       dialog.classList.add("is-table-popout");
+      body.classList.remove("combined-chart");
       [zoomIn, zoomOut, reset].forEach((button) => { button.hidden = true; });
       rerender();
       dialog.showModal();
@@ -2041,6 +2236,13 @@ function renderData() {
   renderDashboard(elements.dashboard, series, { ...settings, highlightLocation: effectiveHighlight }, (metric, button) => {
     if (metric.tableGroup) popout.openTable(metric.tableGroup, series, settings.tableGradient, button);
     else popout.open(metric, series, effectiveHighlight, button);
+  }, (view) => {
+    settings.temperatureView = view;
+    persist();
+    const top = elements.dashboard.scrollTop;
+    renderData();
+    elements.dashboard.scrollTop = top;
+    elements.dashboard.querySelector(`[data-temperature-view="${view}"]`)?.focus({ preventScroll: true });
   });
 }
 

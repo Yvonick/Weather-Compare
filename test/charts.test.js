@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildTableModel, chartScale, chartTickParts, lineDashForKind, tableHeatStyle, temperatureChartMetrics } from "../src/charts.js";
+import { buildTableModel, chartScale, chartSegments, chartTickParts, combinedTemperatureMetric, lineDashForKind, tableHeatStyle, temperatureBandIndices, temperatureChartMetrics } from "../src/charts.js";
 
 const seriesWith = (key, values) => [{
   rows: values.map((value) => ({ [key]: value }))
@@ -112,4 +112,49 @@ test("temperature table rows share one heat domain", () => {
   }, [{ rows: [{ key: "a", temperatureMin: -5, temperatureMax: 28 }] }]);
 
   assert.deepEqual(model.rows.map((row) => row.heatDomain), [{ min: -5, max: 28 }, { min: -5, max: 28 }]);
+});
+
+test("combined temperature scale always includes every location's extrema", () => {
+  const metric = combinedTemperatureMetric();
+  const series = [{ styleIndex: 4, rows: [{ temperatureMin: -10, temperatureAvg: 20, temperatureMax: 25 }] }, { styleIndex: 8, rows: [{ temperatureMin: 2, temperatureAvg: 28, temperatureMax: 40 }] }];
+  const scale = chartScale(metric, series);
+  metric.rangeFocus = 8;
+  assert.deepEqual(chartScale(metric, series), scale);
+  assert.ok(scale.min < -10 && scale.max > 40);
+});
+
+test("band selection uses stable location IDs and adapts to visible count", () => {
+  const series = [1, 4, 8].map((styleIndex) => ({ styleIndex }));
+  assert.deepEqual(temperatureBandIndices(series, 4), [4]);
+  assert.deepEqual(temperatureBandIndices(series, 999), [1]);
+  assert.deepEqual(temperatureBandIndices(series.slice(1), 1), [4, 8]);
+  assert.deepEqual(temperatureBandIndices(series.slice(2), null), [8]);
+  assert.deepEqual(temperatureBandIndices([], null), []);
+});
+
+test("range segments break at absent, incomplete, or reversed ranges", () => {
+  const rows = [
+    { key: "a", min: 1, max: 3 }, { key: "b", min: null, max: 4 },
+    { key: "d", min: 2, max: 5 }, { key: "e", min: 8, max: 4 },
+    { key: "f", min: 2, max: null }, { key: "g", min: 3, max: 3 }
+  ];
+  const segments = chartSegments(["a", "b", "c", "d", "e", "f", "g"], rows, ["min", "max"]);
+  assert.deepEqual(segments.map((segment) => segment.points.map((point) => point.index)), [[0], [3], [6]]);
+});
+
+test("forecast range edges bridge adjacent samples but never missing buckets", () => {
+  const rows = [{ key: "a", avg: 3 }, { key: "b", avg: 4, dataKind: "forecast" }, { key: "d", avg: 6, dataKind: "forecast" }];
+  const segments = chartSegments(["a", "b", "c", "d"], rows, ["avg"]);
+  assert.deepEqual(segments.map(({ kind, points }) => [kind, points.map(({ index }) => index)]), [["historical", [0]], ["forecast", [0, 1]], ["forecast", [3]]]);
+  assert.equal(lineDashForKind(segments[0].kind), "");
+  assert.equal(lineDashForKind(segments[1].kind), "8 5");
+});
+
+test("entirely absent time buckets do not get bridged", () => {
+  const keys = ["2026-09-10", "2026-09-12"];
+  const rows = keys.map((key) => ({ key, min: 10, max: 20 }));
+  assert.deepEqual(chartSegments(keys, rows, ["min", "max"], 1440).map(({ points }) => points.length), [1, 1]);
+  const hours = ["2026-09-10T00:00", "2026-09-10T01:00"];
+  assert.equal(chartSegments(hours, hours.map((key) => ({ key, avg: 4 })), ["avg"], 30).length, 2);
+  assert.equal(chartSegments(hours, hours.map((key) => ({ key, avg: 4 })), ["avg"], 60).length, 1);
 });
