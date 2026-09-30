@@ -6,3 +6,4 @@ dist/
 weathercompare-*.csv
 .env
 .env.local
+.local/

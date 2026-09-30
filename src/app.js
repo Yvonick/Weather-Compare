@@ -4,8 +4,8 @@ import { createChartPopout, renderDashboard } from "./charts.js";
 import { setupDatePickers } from "./calendar.js";
 import { CONTINUOUS_PRESET, MAX_LOCATIONS, SERIES_STYLES } from "./config.js";
 import { downloadCsv } from "./export.js";
+import { createShortShareUrl } from "./sharing.js";
 import {
-  buildShareUrl,
   createDefaultSettings,
   describeWindow,
   formatDisplayDate,
@@ -361,16 +361,31 @@ function queueSuggestions(index, query) {
 }
 
 async function copyShareLink() {
+  if (elements.share.disabled) return;
   const errors = validateSettings(settings);
   renderErrors(errors);
   if (errors.length) {
     setStatus("Fix the input errors before creating a share link.");
     return;
   }
-  const url = buildShareUrl(settings, window.location.href);
+  const originalLabel = elements.share.textContent;
+  elements.share.disabled = true;
+  elements.share.textContent = "Creating link…";
+  elements.share.setAttribute("aria-busy", "true");
+  let url;
+  try {
+    url = await createShortShareUrl(settings, window.location.href);
+  } catch {
+    setStatus("Could not create a short link. Your comparison is unchanged; please try again.");
+    return;
+  } finally {
+    elements.share.disabled = false;
+    elements.share.textContent = originalLabel;
+    elements.share.removeAttribute("aria-busy");
+  }
   try {
     await navigator.clipboard.writeText(url);
-    setStatus("Share link copied to clipboard.");
+    setStatus("Short link copied to clipboard.");
   } catch {
     const helper = document.createElement("textarea");
     helper.value = url;
@@ -379,9 +394,10 @@ async function copyShareLink() {
     helper.style.left = "-9999px";
     document.body.append(helper);
     helper.select();
-    const copied = document.execCommand("copy");
+    let copied = false;
+    try { copied = document.execCommand("copy"); } catch { /* Display the link below instead. */ }
     helper.remove();
-    setStatus(copied ? "Share link copied to clipboard." : `Share link: ${url}`);
+    setStatus(copied ? "Short link copied to clipboard." : `Copy this short link: ${url}`);
   }
 }
 

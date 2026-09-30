@@ -1,6 +1,6 @@
 # Weather Compare
 
-A dependency-free web application for comparing historical and forecast weather and air-quality data across up to 20 places. The default view joins the previous seven complete days to a seven-day forecast on one continuous timeline. Weather and air quality come from Open-Meteo. Historical temperature ranges use higher-frequency national station observations where possible, with an automatic per-bucket Open-Meteo fallback.
+A web application with no browser runtime dependencies for comparing historical and forecast weather and air-quality data across up to 20 places. The default view joins the previous seven complete days to a seven-day forecast on one continuous timeline. Weather and air quality come from Open-Meteo. Historical temperature ranges use higher-frequency national station observations where possible, with an automatic per-bucket Open-Meteo fallback.
 
 ## Reading comparisons
 
@@ -10,6 +10,8 @@ A dependency-free web application for comparing historical and forecast weather 
 - Date fields accept `dd/mm/yyyy` or the calendar button. The picker supports month/year navigation, arrow keys, Page Up/Down, Today, and Escape.
 
 ## Run locally
+
+Use Node 24 or newer. Run `npm.cmd ci` to install the development-only schema tools.
 
 ```powershell
 npm.cmd start
@@ -60,4 +62,10 @@ npm.cmd run check
 - `docs/architecture.md` — rebuild decisions and known prototype issues addressed
 - `docs/full-workflow-audit.md` — verified prototype-to-rebuild workflow parity
 
-No third-party packages are required. The three optional credential variables only enable their corresponding national adapters; all other behavior and the Open-Meteo fallback work without secrets. `npm.cmd start` and `npm.cmd run check` rebuild the browser bundle automatically.
+No third-party runtime packages are required. Drizzle is used only to generate database migrations. The three optional credential variables only enable their corresponding national adapters; all other behavior and the Open-Meteo fallback work without secrets. `npm.cmd start` and `npm.cmd run check` rebuild the browser bundle automatically.
+
+## Sharing comparisons
+
+Share copies a same-site `/s/<token>` link. Settings are stored durably in the Site's D1 database; opening the link redirects to the existing comparison URL and loads automatically. Repeated shares of identical settings reuse the link. Existing full URLs still work. Links have no automatic expiry, and anyone with a link can open its comparison settings. They share settings, not a weather-data snapshot: relative time presets continue to roll forward, while custom dates remain fixed.
+
+The schema is in `db/schema.ts`; run `npm.cmd run db:generate` after changing it and commit the generated `drizzle/` files. Sites applies those migrations before deployment. Local development applies the same migrations to `.local/shares.sqlite` (ignored by Git and not publicly served). Local links work only while that local server is available; use the published Site for shareable links.

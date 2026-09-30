@@ -2,8 +2,12 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
 import { handleTemperatureRequest } from "../server/temperature-api.js";
+import { handleShareRequest } from "../server/shares.js";
+import { openLocalShareDatabase } from "./local-share-db.mjs";
+import { Readable } from "node:stream";
 
 const root = resolve(process.cwd());
+let shareDb;
 const requestedPort = Number(process.env.PORT || 4173);
 const types = {
   ".css": "text/css; charset=utf-8",
@@ -16,6 +20,30 @@ const types = {
 const server = createServer(async (request, response) => {
   const requestUrl = new URL(request.url, `http://${request.headers.host}`);
   const pathname = decodeURIComponent(requestUrl.pathname);
+
+  if (pathname === "/api/shares" || pathname.startsWith("/s/")) {
+    const options = { method: request.method, headers: request.headers };
+    if (!["GET", "HEAD"].includes(request.method)) {
+      options.body = Readable.toWeb(request);
+      options.duplex = "half";
+    }
+    try {
+      shareDb ||= openLocalShareDatabase(root);
+      const result = await handleShareRequest(new Request(requestUrl, options), { DB: shareDb });
+      response.writeHead(result.status, Object.fromEntries(result.headers));
+      response.end(Buffer.from(await result.arrayBuffer()));
+    } catch (error) {
+      console.error("Local sharing failed", error);
+      response.writeHead(503, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "Short links are temporarily unavailable." }));
+    }
+    return;
+  }
+  if (pathname.split("/").some((part) => part.startsWith("."))) {
+    response.writeHead(404);
+    response.end("Not found");
+    return;
+  }
 
   if (pathname === "/api/temperature-range") {
     const apiResponse = await handleTemperatureRequest(new Request(requestUrl, { method: request.method }), process.env);

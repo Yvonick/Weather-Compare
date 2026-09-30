@@ -6,6 +6,7 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const moduleOrder = [
   "src/config.js",
   "src/settings.js",
+  "src/sharing.js",
   "src/aggregate.js",
   "src/api.js",
   "src/async.js",

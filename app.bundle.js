@@ -306,6 +306,22 @@ function describeWindow(settings) {
 }
 
 
+/* src/sharing.js */
+async function createShortShareUrl(settings, baseUrl, fetcher = fetch) {
+  const comparisonUrl = new URL(buildShareUrl(settings, baseUrl));
+  const response = await fetcher(new URL("/api/shares", baseUrl), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query: comparisonUrl.search }),
+    signal: AbortSignal.timeout(15000)
+  });
+  if (!response.ok) throw new Error("Short-link creation failed");
+  const result = await response.json();
+  if (!/^\/s\/[A-Za-z0-9_-]{12}$/.test(result.path)) throw new Error("Invalid short link");
+  return new URL(result.path, baseUrl).href;
+}
+
+
 /* src/aggregate.js */
 function getBucketKey(timeString, granularity) {
   const [date, clock = "00:00"] = timeString.split("T");
@@ -2392,16 +2408,31 @@ function queueSuggestions(index, query) {
 }
 
 async function copyShareLink() {
+  if (elements.share.disabled) return;
   const errors = validateSettings(settings);
   renderErrors(errors);
   if (errors.length) {
     setStatus("Fix the input errors before creating a share link.");
     return;
   }
-  const url = buildShareUrl(settings, window.location.href);
+  const originalLabel = elements.share.textContent;
+  elements.share.disabled = true;
+  elements.share.textContent = "Creating link…";
+  elements.share.setAttribute("aria-busy", "true");
+  let url;
+  try {
+    url = await createShortShareUrl(settings, window.location.href);
+  } catch {
+    setStatus("Could not create a short link. Your comparison is unchanged; please try again.");
+    return;
+  } finally {
+    elements.share.disabled = false;
+    elements.share.textContent = originalLabel;
+    elements.share.removeAttribute("aria-busy");
+  }
   try {
     await navigator.clipboard.writeText(url);
-    setStatus("Share link copied to clipboard.");
+    setStatus("Short link copied to clipboard.");
   } catch {
     const helper = document.createElement("textarea");
     helper.value = url;
@@ -2410,9 +2441,10 @@ async function copyShareLink() {
     helper.style.left = "-9999px";
     document.body.append(helper);
     helper.select();
-    const copied = document.execCommand("copy");
+    let copied = false;
+    try { copied = document.execCommand("copy"); } catch { /* Display the link below instead. */ }
     helper.remove();
-    setStatus(copied ? "Share link copied to clipboard." : `Share link: ${url}`);
+    setStatus(copied ? "Short link copied to clipboard." : `Copy this short link: ${url}`);
   }
 }
 
